@@ -1,0 +1,466 @@
+<script type="text/javascript">
+    RED.nodes.registerType('schema-bridge', {
+        category: 'database',
+        color: '#D4A574',
+        defaults: {
+            name: { value: "" },
+            sourceConnection: { value: "", type: "Schema Bridge Connection" },
+            targetConnection: { value: "", type: "Schema Bridge Connection" },
+            sourceTable: { value: "" },
+            targetTable: { value: "" },
+            operation: { value: "analyze" },
+            outputFormat: { value: "json" },
+            generateSql: { value: false },
+            executeSQL: { value: false },
+            customSchema: { value: "[]" }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: "bridge.png",
+        label: function() {
+            return this.name || "Schema Bridge";
+        },
+        labelStyle: function() {
+            return this.name ? "node_label_italic" : "";
+        },
+        oneditprepare: function() {
+            const node = this;
+            
+            // 初始化標籤頁
+            const tabs = RED.tabs.create({
+                id: "node-schema-bridge-tabs",
+                onchange: function(tab) {
+                    $("#node-schema-bridge-tabs-content").children().hide();
+                    $("#" + tab.id).show();
+                }
+            });
+            
+            tabs.addTab({
+                id: "schema-bridge-tab-basic",
+                label: "Basic"
+            });
+            
+            tabs.addTab({
+                id: "schema-bridge-tab-schema",
+                label: "Schema Editor"
+            });
+            
+            tabs.addTab({
+                id: "schema-bridge-tab-sql",
+                label: "SQL Output"
+            });
+            
+            // 載入 schema（從輸入的表格名稱）
+            function loadSchemaFromInput() {
+                const sourceConnection = $('#node-input-sourceConnection').val();
+                const sourceTable = $('#node-input-sourceTable').val().trim();
+                
+                if (!sourceConnection) {
+                    RED.notify('Please select a source connection first', 'warning');
+                    return;
+                }
+                
+                if (!sourceTable) {
+                    RED.notify('Please enter a table name', 'warning');
+                    return;
+                }
+                
+                // 顯示載入狀態
+                const loadButton = $('#load-schema-btn');
+                const originalText = loadButton.html();
+                loadButton.html('<i class="fa fa-spinner fa-spin"></i> Loading...').prop('disabled', true);
+                
+                loadSourceSchema().finally(() => {
+                    // 恢復按鈕狀態
+                    loadButton.html(originalText).prop('disabled', false);
+                });
+            }
+            
+            // 載入 schema
+            function loadSourceSchema() {
+                const sourceConnection = $('#node-input-sourceConnection').val();
+                const sourceTable = $('#node-input-sourceTable').val();
+                
+                if (!sourceConnection || !sourceTable) return;
+                
+                $.ajax({
+                    url: '/schema-bridge/connection-schema',
+                    method: 'POST',
+                    data: JSON.stringify({
+                        connectionId: sourceConnection,
+                        tableName: sourceTable
+                    }),
+                    contentType: 'application/json'
+                })
+                .done(function(schema) {
+                    displaySchemaEditor(schema);
+                })
+                .fail(function(xhr) {
+                    RED.notify('Failed to load schema: ' + (xhr.responseJSON?.error || 'Unknown error'), 'error');
+                });
+            }
+            
+            // 顯示 Schema 編輯器
+            function displaySchemaEditor(schema) {
+                const container = $('#schema-editor-container');
+                container.empty();
+                
+                if (!schema || schema.length === 0) {
+                    container.append('<p>No schema data available. Please select a source table first.</p>');
+                    return;
+                }
+                
+                const table = $(`
+                    <table class="schema-table" style="width: 100%; border-collapse: collapse; background-color: #2a2a2a; color: #e0e0e0;">
+                        <thead>
+                            <tr style="background-color: #3a3a3a;">
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Column Name</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Source Type</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Target Type</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Nullable</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Default Value</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                `);
+                
+                const tbody = table.find('tbody');
+                
+                schema.forEach((column, index) => {
+                    const row = $(`
+                        <tr data-index="${index}" style="background-color: #2a2a2a;">
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <input type="text" value="${column.name}" class="column-name" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px; color: #b0b0b0;">${column.type}</td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <select class="target-type" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                                    ${getTargetTypeOptions(column.mappedType || column.type)}
+                                </select>
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px; text-align: center;">
+                                <input type="checkbox" class="nullable" ${column.nullable ? 'checked' : ''} style="transform: scale(1.2);">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <input type="text" value="${column.defaultValue || ''}" class="default-value" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <button type="button" class="delete-column" style="background-color: #c44; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Delete</button>
+                            </td>
+                        </tr>
+                    `);
+                    tbody.append(row);
+                });
+                
+                container.append(table);
+                
+                // 新增欄位按鈕
+                const addButton = $('<button type="button" style="margin-top: 10px; background-color: #4a6741; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer;">Add Column</button>');
+                addButton.click(function() {
+                    const newRow = $(`
+                        <tr data-index="${schema.length}" style="background-color: #2a2a2a;">
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <input type="text" value="new_column" class="column-name" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px; color: #b0b0b0;">VARCHAR(255)</td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <select class="target-type" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                                    ${getTargetTypeOptions('VARCHAR(255)')}
+                                </select>
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px; text-align: center;">
+                                <input type="checkbox" class="nullable" checked style="transform: scale(1.2);">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <input type="text" value="" class="default-value" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
+                            </td>
+                            <td style="border: 1px solid #555; padding: 8px;">
+                                <button type="button" class="delete-column" style="background-color: #c44; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer;">Delete</button>
+                            </td>
+                        </tr>
+                    `);
+                    tbody.append(newRow);
+                });
+                
+                container.append(addButton);
+                
+                // 預覽 SQL 按鈕
+                const previewButton = $('<button type="button" style="margin-top: 10px; margin-left: 10px; background-color: #4a5f6a; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer;">Preview SQL</button>');
+                previewButton.click(generateSqlPreview);
+                container.append(previewButton);
+                
+                // 刪除欄位事件
+                container.on('click', '.delete-column', function() {
+                    $(this).closest('tr').remove();
+                });
+            }
+            
+            // 取得目標類型選項
+            function getTargetTypeOptions(selectedType) {
+                const commonTypes = [
+                    'VARCHAR(255)', 'VARCHAR(100)', 'VARCHAR(50)',
+                    'TEXT', 'NVARCHAR(255)', 'CHAR(10)',
+                    'INT', 'INTEGER', 'BIGINT', 'SMALLINT',
+                    'DECIMAL(10,2)', 'NUMERIC(10,2)', 'FLOAT', 'DOUBLE',
+                    'DATE', 'TIME', 'DATETIME', 'TIMESTAMP',
+                    'BOOLEAN', 'BIT', 'BLOB', 'CLOB',
+                    'SERIAL', 'SERIAL PRIMARY KEY'
+                ];
+                
+                return commonTypes.map(type => 
+                    `<option value="${type}" ${type === selectedType ? 'selected' : ''}>${type}</option>`
+                ).join('');
+            }
+            
+            // 生成 SQL 預覽
+            function generateSqlPreview() {
+                const targetConnection = $('#node-input-targetConnection').val();
+                const targetTable = $('#node-input-targetTable').val() || 'target_table';
+                
+                if (!targetConnection) {
+                    RED.notify('Please select a target connection first', 'warning');
+                    return;
+                }
+                
+                const schema = collectSchemaData();
+                
+                // 取得目標資料庫類型
+                const targetConnectionNode = RED.nodes.node(targetConnection);
+                const targetDbType = targetConnectionNode ? targetConnectionNode.dbType : 'postgres';
+                
+                const sql = generateCreateTableSQL(targetDbType, targetTable, schema);
+                $('#sql-output').val(sql);
+                
+                // 切換到 SQL 標籤
+                tabs.activateTab("schema-bridge-tab-sql");
+            }
+            
+            // 收集 schema 資料
+            function collectSchemaData() {
+                const schema = [];
+                $('#schema-editor-container tbody tr').each(function() {
+                    const row = $(this);
+                    if (row.find('.column-name').val()) {
+                        schema.push({
+                            name: row.find('.column-name').val(),
+                            type: row.find('.target-type').val(),
+                            nullable: row.find('.nullable').prop('checked'),
+                            defaultValue: row.find('.default-value').val()
+                        });
+                    }
+                });
+                return schema;
+            }
+            
+            // 生成建表 SQL
+            function generateCreateTableSQL(dbType, tableName, schema) {
+                let sql = `CREATE TABLE ${tableName} (\n`;
+                
+                const columnDefs = schema.map(column => {
+                    let def = `    ${column.name} ${column.type}`;
+                    if (!column.nullable) def += ' NOT NULL';
+                    if (column.defaultValue) {
+                        // 處理不同類型的預設值
+                        if (typeof column.defaultValue === 'string' && 
+                            !column.defaultValue.startsWith('(') && 
+                            !column.defaultValue.match(/^[0-9]+$/)) {
+                            def += ` DEFAULT '${column.defaultValue}'`;
+                        } else {
+                            def += ` DEFAULT ${column.defaultValue}`;
+                        }
+                    }
+                    return def;
+                });
+                
+                sql += columnDefs.join(',\n');
+                sql += '\n);';
+                
+                return sql;
+            }
+            
+            // 事件監聽
+            $('#load-schema-btn').click(function() {
+                loadSchemaFromInput();
+            });
+            
+            // 支援 Enter 鍵載入 schema
+            $('#node-input-sourceTable').keypress(function(e) {
+                if (e.which === 13) { // Enter key
+                    loadSchemaFromInput();
+                }
+            });
+            
+            // 初始化 - 不再自動載入表格列表
+            
+            // 載入自訂 schema
+            if (node.customSchema && node.customSchema !== '[]') {
+                try {
+                    const schema = JSON.parse(node.customSchema);
+                    setTimeout(() => displaySchemaEditor(schema), 100);
+                } catch (e) {
+                    console.error('Failed to parse custom schema:', e);
+                }
+            }
+        },
+        
+        oneditsave: function() {
+            // 儲存自訂 schema
+            const schema = [];
+            $('#schema-editor-container tbody tr').each(function() {
+                const row = $(this);
+                if (row.find('.column-name').val()) {
+                    schema.push({
+                        name: row.find('.column-name').val(),
+                        type: row.find('.target-type').val(),
+                        nullable: row.find('.nullable').prop('checked'),
+                        defaultValue: row.find('.default-value').val()
+                    });
+                }
+            });
+            this.customSchema = JSON.stringify(schema);
+        }
+    });
+</script>
+
+<script type="text/x-red" data-template-name="schema-bridge">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Schema Bridge">
+    </div>
+    
+    <div class="form-row">
+        <ul style="min-width: 600px; margin-bottom: 20px;" id="node-schema-bridge-tabs"></ul>
+    </div>
+    
+    <div id="node-schema-bridge-tabs-content" style="min-height: 400px;">
+        <!-- Basic Tab -->
+        <div id="schema-bridge-tab-basic" style="display:none">
+            <div class="form-row">
+                <label for="node-input-operation"><i class="fa fa-cogs"></i> Operation</label>
+                <select id="node-input-operation">
+                    <option value="analyze">Analyze Schema</option>
+                    <option value="convert">Convert Schema</option>
+                    <option value="migrate">Create Table</option>
+                </select>
+            </div>
+            
+            <div class="form-row">
+                <label for="node-input-sourceConnection"><i class="fa fa-database"></i> Source Connection</label>
+                <input type="text" id="node-input-sourceConnection">
+            </div>
+            
+            <div class="form-row">
+                <label for="node-input-sourceTable"><i class="fa fa-table"></i> Source Table</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="node-input-sourceTable" placeholder="Enter table name..." style="flex: 1;">
+                    <button type="button" id="load-schema-btn" class="red-ui-button" style="width: 120px; background-color: #D4A574; border-color: #C49564; color: #2a2a2a; font-weight: bold;">
+                        <i class="fa fa-refresh"></i> Load Schema
+                    </button>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <label for="node-input-targetConnection"><i class="fa fa-database"></i> Target Connection</label>
+                <input type="text" id="node-input-targetConnection">
+            </div>
+            
+            <div class="form-row">
+                <label for="node-input-targetTable"><i class="fa fa-table"></i> Target Table</label>
+                <input type="text" id="node-input-targetTable" placeholder="Leave empty to use source table name">
+            </div>
+            
+            <div class="form-row">
+                <label for="node-input-outputFormat"><i class="fa fa-file-code-o"></i> Output Format</label>
+                <select id="node-input-outputFormat">
+                    <option value="json">JSON</option>
+                    <option value="sql">SQL</option>
+                    <option value="both">Both</option>
+                </select>
+            </div>
+            
+            <div class="form-row">
+                <input type="checkbox" id="node-input-generateSql" style="display: inline-block; width: auto; vertical-align: top;">
+                <label for="node-input-generateSql" style="width: auto;">Generate SQL Commands</label>
+            </div>
+            
+            <div class="form-row">
+                <input type="checkbox" id="node-input-executeSQL" style="display: inline-block; width: auto; vertical-align: top;">
+                <label for="node-input-executeSQL" style="width: auto;">Execute SQL (Create Table)</label>
+            </div>
+        </div>
+        
+        <!-- Schema Editor Tab -->
+        <div id="schema-bridge-tab-schema" style="display:none">
+            <div class="form-row">
+                <h4>Schema Editor</h4>
+                <p>Modify the schema structure, column names, and data types before migration.</p>
+            </div>
+            
+            <div id="schema-editor-container" style="max-height: 400px; overflow-y: auto;">
+                <p>Please select a source connection and table in the Basic tab to load the schema.</p>
+            </div>
+        </div>
+        
+        <!-- SQL Output Tab -->
+        <div id="schema-bridge-tab-sql" style="display:none">
+            <div class="form-row">
+                <h4>Generated SQL</h4>
+                <p>Preview the SQL commands that will be generated based on your schema configuration.</p>
+            </div>
+            
+            <div class="form-row">
+                <textarea id="sql-output" style="width: 100%; height: 300px; font-family: monospace;" readonly placeholder="SQL commands will appear here..."></textarea>
+            </div>
+            
+            <div class="form-row">
+                <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('sql-output').value)">Copy SQL</button>
+            </div>
+        </div>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="schema-bridge">
+    <p>The <b>Schema Bridge</b> node enables database schema analysis, conversion, and migration between different database systems.</p>
+    
+    <h3>Features</h3>
+    <ul>
+        <li><b>Schema Analysis</b> - Analyze source database table structure</li>
+        <li><b>Visual Schema Editor</b> - Modify column names, data types, and constraints</li>
+        <li><b>Smart Type Mapping</b> - Automatic data type conversion between databases</li>
+        <li><b>SQL Generation</b> - Generate CREATE TABLE scripts</li>
+        <li><b>Table Creation</b> - Execute CREATE TABLE statements on target database</li>
+    </ul>
+
+    <h3>Supported Databases</h3>
+    <p>Microsoft SQL Server, PostgreSQL, MySQL, Oracle Database, IBM Informix</p>
+
+    <h3>Configuration</h3>
+    
+    <h4>Basic Tab</h4>
+    <ul>
+        <li><b>Operation</b> - Choose analysis, conversion, or table creation</li>
+        <li><b>Source/Target Connections</b> - Select configured database connections</li>
+        <li><b>Tables</b> - Choose source table and specify target table name</li>
+        <li><b>Output Format</b> - JSON, SQL, or both</li>
+        <li><b>Options</b> - SQL generation and execution settings</li>
+    </ul>
+    
+    <h4>Schema Editor Tab</h4>
+    <ul>
+        <li><b>Visual Editor</b> - Modify schema structure interactively</li>
+        <li><b>Column Management</b> - Add, remove, or rename columns</li>
+        <li><b>Type Mapping</b> - Adjust data type conversions</li>
+        <li><b>Constraints</b> - Set nullable and default values</li>
+    </ul>
+    
+    <h4>SQL Output Tab</h4>
+    <ul>
+        <li><b>Preview</b> - View generated SQL commands</li>
+        <li><b>Copy</b> - Copy SQL to clipboard for manual execution</li>
+    </ul>
+
+    <h3>Outputs</h3>
+    <p>The node outputs schema information, conversion results, and table creation status based on the selected operation and format.</p>
+</script> 
