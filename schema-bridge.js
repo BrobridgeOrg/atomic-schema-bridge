@@ -13,190 +13,188 @@ module.exports = function(RED) {
         this.targetConnection = config.targetConnection;
         this.sourceTable = config.sourceTable;
         this.targetTable = config.targetTable || config.sourceTable;
-        this.operation = config.operation || 'analyze';
-        this.generateSql = config.generateSql || false;
-        this.executeSQL = config.executeSQL || false;
+        this.generateSql = config.generateSql !== false; // 預設為 true
+        this.createTable = config.createTable || false;
         this.customSchema = config.customSchema;
+        this.operationMode = config.operationMode || 'connection';
+        this.targetDbType = config.targetDbType || 'postgres';
         
-        // 初始化狀態
-        this.status({ fill: "grey", shape: "ring", text: "ready" });
+        // 初始化狀態和連接檢查
+        updateConnectionStatus();
+        
+        // 部署後延遲檢查連線狀態（確保所有節點都已初始化）
+        setTimeout(() => {
+            updateConnectionStatus().catch(err => {
+                node.warn(`Failed to check connections after deployment: ${err.message}`);
+            });
+        }, 3000);
+        
+        // 檢查和更新連接狀態（異步版本）
+        async function updateConnectionStatus() {
+            // 先顯示檢查中狀態
+            node.status({ fill: "blue", shape: "ring", text: "checking connections..." });
+            
+            try {
+                const sourceConnected = await checkConnection(node.sourceConnection);
+                
+                if (node.operationMode === 'generation') {
+                    // SQL Generation Mode - 只檢查 source connection
+                    if (!node.sourceConnection) {
+                        node.status({ fill: "grey", shape: "ring", text: "no source connection" });
+                    } else if (sourceConnected) {
+                        node.status({ fill: "green", shape: "ring", text: `source connected | ${node.targetDbType} mode` });
+                    } else {
+                        node.status({ fill: "red", shape: "ring", text: "source connection failed" });
+                    }
+                } else {
+                    // Database Connection Mode - 檢查兩個 connections
+                    const targetConnected = await checkConnection(node.targetConnection);
+                    
+                    if (!node.sourceConnection && !node.targetConnection) {
+                        node.status({ fill: "grey", shape: "ring", text: "no connections" });
+                    } else if (sourceConnected && targetConnected) {
+                        node.status({ fill: "green", shape: "ring", text: "both connected" });
+                    } else if (sourceConnected && !targetConnected) {
+                        node.status({ fill: "yellow", shape: "ring", text: "source only" });
+                    } else if (!sourceConnected && targetConnected) {
+                        node.status({ fill: "yellow", shape: "ring", text: "target only" });
+                    } else {
+                        node.status({ fill: "red", shape: "ring", text: "connections failed" });
+                    }
+                }
+            } catch (error) {
+                node.status({ fill: "red", shape: "ring", text: "connection check failed" });
+                node.warn(`Connection check error: ${error.message}`);
+            }
+        }
+        
+        // 將函數暴露給節點實例，供 API 端點使用
+        node.updateConnectionStatus = updateConnectionStatus;
+        
+        // 真正測試資料庫連接狀態（異步版本）
+        async function checkConnection(connectionId) {
+            if (!connectionId) return false;
+            
+            try {
+                const connectionNode = RED.nodes.getNode(connectionId);
+                if (!connectionNode) return false;
+                
+                // 嘗試獲取客戶端並測試連線
+                const client = connectionNode.getClient();
+                if (!client) return false;
+                
+                // 根據資料庫類型選擇適當的測試查詢
+                let testQuery = 'SELECT 1';
+                if (connectionNode.dbType === 'oracle') {
+                    testQuery = 'SELECT 1 FROM DUAL';
+                }
+                
+                // 執行測試查詢來驗證連線
+                await client.executeQuery(testQuery);
+                return true;
+                
+            } catch (error) {
+                // 連線失敗，記錄詳細錯誤（僅用於調試）
+                // node.warn(`Connection test failed for ${connectionId}: ${error.message}`);
+                return false;
+            }
+        }
+        
+        // 監聽連接節點狀態變化
+        if (node.sourceConnection) {
+            const sourceNode = RED.nodes.getNode(node.sourceConnection);
+            if (sourceNode && sourceNode.instance) {
+                sourceNode.instance.on('status', () => {
+                    updateConnectionStatus().catch(err => {
+                        node.warn(`Failed to update connection status: ${err.message}`);
+                    });
+                });
+            }
+        }
+        
+        if (node.targetConnection) {
+            const targetNode = RED.nodes.getNode(node.targetConnection);
+            if (targetNode && targetNode.instance) {
+                targetNode.instance.on('status', () => {
+                    updateConnectionStatus().catch(err => {
+                        node.warn(`Failed to update connection status: ${err.message}`);
+                    });
+                });
+            }
+        }
+        
+        // 節點關閉時清理
+        node.on('close', function() {
+            // 清理任何定時器或監聽器
+        });
         
         node.on('input', async function(msg) {
             try {
-                node.status({ fill: "blue", shape: "dot", text: "processing" });
+                // 檢查連接
+                const sourceConnectionNode = RED.nodes.getNode(node.sourceConnection);
                 
-                switch (node.operation) {
-                    case 'analyze':
-                        await handleAnalyze(msg);
-                        break;
-                    case 'convert':
-                        await handleConvert(msg);
-                        break;
-                    case 'migrate':
-                        await handleMigrate(msg);
-                        break;
-                    default:
-                        throw new Error(`Unknown operation: ${node.operation}`);
+                if (!sourceConnectionNode) {
+                    node.status({ fill: "red", shape: "ring", text: "source needed" });
+                    throw new Error('Source connection required');
                 }
                 
-                node.status({ fill: "green", shape: "dot", text: "success" });
+                if (node.operationMode === 'connection') {
+                    // Database Connection Mode
+                    const targetConnectionNode = RED.nodes.getNode(node.targetConnection);
+                    
+                    if (!targetConnectionNode) {
+                        node.status({ fill: "red", shape: "ring", text: "target connection needed" });
+                        throw new Error('Target connection required in connection mode');
+                    }
+                    
+                    // 如果需要建立表格，確保有目標連接
+                    if (node.createTable && !targetConnectionNode) {
+                        node.status({ fill: "red", shape: "ring", text: "target needed for table creation" });
+                        throw new Error('Target connection required for table creation');
+                    }
+                } else {
+                    // SQL Generation Mode - 不需要 target connection，但 createTable 應該被禁用
+                    if (node.createTable) {
+                        node.status({ fill: "red", shape: "ring", text: "cannot create table in generation mode" });
+                        throw new Error('Table creation not available in SQL generation mode');
+                    }
+                }
+                
+                // 執行 Schema 處理
+                await handleSchemaProcessing(msg);
+                
+                // 顯示成功狀態
+                if (node.createTable) {
+                    node.status({ fill: "green", shape: "dot", text: "table created" });
+                } else {
+                    const modeText = node.operationMode === 'generation' ? ` (${node.targetDbType})` : '';
+                    node.status({ fill: "green", shape: "dot", text: `SQL generated${modeText}` });
+                }
+                
+                // 2秒後回到連接狀態顯示
+                setTimeout(() => {
+                    updateConnectionStatus().catch(err => {
+                        node.warn(`Failed to update connection status: ${err.message}`);
+                    });
+                }, 2000);
+                
             } catch (error) {
-                node.status({ fill: "red", shape: "dot", text: "error" });
+                const action = node.createTable ? "create table" : "generate SQL";
+                node.status({ fill: "red", shape: "dot", text: `${action} failed` });
                 node.error(error.message, msg);
+                
+                // 5秒後回到連接狀態顯示
+                setTimeout(() => {
+                    updateConnectionStatus().catch(err => {
+                        node.warn(`Failed to update connection status: ${err.message}`);
+                    });
+                }, 5000);
             }
         });
         
-        // 分析來源表 schema
-        async function handleAnalyze(msg) {
+        // 統一的 Schema 處理函數
+        async function handleSchemaProcessing(msg) {
             const sourceConnectionNode = RED.nodes.getNode(node.sourceConnection);
-            if (!sourceConnectionNode) {
-                throw new Error('Source connection not found');
-            }
-            
-            const tableName = msg.payload?.tableName || node.sourceTable;
-            if (!tableName) {
-                throw new Error('Table name not provided');
-            }
-            
-            try {
-                // 使用連接節點獲取 schema
-                const sourceClient = sourceConnectionNode.getClient();
-                const schema = await sourceClient.getTableSchema(tableName);
-                
-                // 轉換為標準化格式
-                const normalizedSchema = schema.map(column => {
-                    const standardType = mapper.normalizeType(column.data_type, sourceConnectionNode.dbType);
-                    
-                    return {
-                        originalName: column.column_name,
-                        name: column.column_name,
-                        originalType: column.data_type,
-                        standardType: standardType,
-                        mappedType: node.targetConnection ? 
-                            mapper.convertToTarget(standardType, RED.nodes.getNode(node.targetConnection)?.dbType, column.character_maximum_length, column.numeric_scale) : 
-                            standardType,
-                        length: column.character_maximum_length,
-                        precision: column.numeric_precision,
-                        scale: column.numeric_scale,
-                        nullable: column.is_nullable === 'YES',
-                        defaultValue: column.column_default,
-                        isCustom: false
-                    };
-                });
-                
-                const result = {
-                    operation: 'analyze',
-                    sourceTable: tableName,
-                    sourceDbType: sourceConnectionNode.dbType,
-                    targetDbType: node.targetConnection ? RED.nodes.getNode(node.targetConnection)?.dbType : null,
-                    schema: normalizedSchema,
-                    metadata: {
-                        totalColumns: normalizedSchema.length,
-                        analyzedAt: new Date().toISOString()
-                    }
-                };
-                
-                // 如果需要生成 SQL
-                if (node.generateSql && node.targetConnection) {
-                    const targetDbType = RED.nodes.getNode(node.targetConnection).dbType;
-                    result.sql = generateCreateTableSQL(
-                        node.targetTable || tableName,
-                        normalizedSchema,
-                        targetDbType
-                    );
-                }
-                
-                msg.payload = result;
-                node.send(msg);
-                
-            } catch (error) {
-                throw new Error(`Failed to analyze schema: ${error.message}`);
-            }
-        }
-        
-        // 轉換 schema
-        async function handleConvert(msg) {
-            const sourceConnectionNode = RED.nodes.getNode(node.sourceConnection);
-            const targetConnectionNode = RED.nodes.getNode(node.targetConnection);
-            
-            if (!sourceConnectionNode) {
-                throw new Error('Source connection not found');
-            }
-            
-            if (!targetConnectionNode) {
-                throw new Error('Target connection not found');
-            }
-            
-            let schema;
-            
-            // 如果有自訂 schema，使用自訂的
-            if (node.customSchema && node.customSchema !== '[]') {
-                try {
-                    schema = JSON.parse(node.customSchema);
-                } catch (e) {
-                    throw new Error('Invalid custom schema format');
-                }
-            } else {
-                // 否則從資料庫取得 schema
-                const tableName = msg.payload?.tableName || node.sourceTable;
-                if (!tableName) {
-                    throw new Error('Table name not provided');
-                }
-                
-                const sourceClient = sourceConnectionNode.getClient();
-                const rawSchema = await sourceClient.getTableSchema(tableName);
-                
-                schema = rawSchema.map(column => {
-                    const standardType = mapper.normalizeType(column.data_type, sourceConnectionNode.dbType);
-                    
-                    return {
-                        name: column.column_name,
-                        type: mapper.convertToTarget(
-                            standardType, 
-                            targetConnectionNode.dbType, 
-                            column.character_maximum_length, 
-                            column.numeric_scale
-                        ),
-                        nullable: column.is_nullable === 'YES',
-                        defaultValue: column.column_default
-                    };
-                });
-            }
-            
-            // 生成 CREATE TABLE SQL
-            const createTableSQL = generateCreateTableSQL(
-                node.targetTable || node.sourceTable,
-                schema,
-                targetConnectionNode.dbType
-            );
-            
-            const result = {
-                operation: 'convert',
-                sourceTable: node.sourceTable,
-                targetTable: node.targetTable || node.sourceTable,
-                sourceDbType: sourceConnectionNode.dbType,
-                targetDbType: targetConnectionNode.dbType,
-                schema: schema,
-                sql: createTableSQL,
-                convertedAt: new Date().toISOString()
-            };
-            
-            msg.payload = result;
-            node.send(msg);
-        }
-        
-        // 執行建表操作
-        async function handleMigrate(msg) {
-            const sourceConnectionNode = RED.nodes.getNode(node.sourceConnection);
-            const targetConnectionNode = RED.nodes.getNode(node.targetConnection);
-            
-            if (!sourceConnectionNode) {
-                throw new Error('Source connection not found');
-            }
-            
-            if (!targetConnectionNode) {
-                throw new Error('Target connection not found');
-            }
             
             const sourceTable = msg.payload?.sourceTable || node.sourceTable;
             const targetTable = msg.payload?.targetTable || node.targetTable || sourceTable;
@@ -205,23 +203,40 @@ module.exports = function(RED) {
                 throw new Error('Source table name not provided');
             }
             
+            // 根據操作模式決定目標資料庫類型
+            let targetDbType, targetConnectionNode = null;
+            if (node.operationMode === 'connection') {
+                targetConnectionNode = RED.nodes.getNode(node.targetConnection);
+                targetDbType = targetConnectionNode.dbType;
+            } else {
+                targetDbType = node.targetDbType;
+            }
+            
+            // 更新狀態：連接到資料庫
+            node.status({ fill: "blue", shape: "dot", text: "connecting..." });
+            
             try {
-                const sourceClient = sourceConnectionNode.getClient();
-                const targetClient = targetConnectionNode.getClient();
-                
-                // 先轉換 schema
+                // 取得 schema
                 let schema;
                 if (node.customSchema && node.customSchema !== '[]') {
+                    // 使用自訂 schema
+                    node.status({ fill: "blue", shape: "dot", text: "using custom schema..." });
                     schema = JSON.parse(node.customSchema);
                 } else {
+                    // 從來源資料庫讀取 schema
+                    node.status({ fill: "blue", shape: "dot", text: `reading ${sourceTable}...` });
+                    const sourceClient = sourceConnectionNode.getClient();
                     const rawSchema = await sourceClient.getTableSchema(sourceTable);
+                    
+                    // 轉換 schema 格式
                     schema = rawSchema.map(column => {
                         const standardType = mapper.normalizeType(column.data_type, sourceConnectionNode.dbType);
+                        
                         return {
                             name: column.column_name,
                             type: mapper.convertToTarget(
                                 standardType, 
-                                targetConnectionNode.dbType, 
+                                targetDbType, 
                                 column.character_maximum_length, 
                                 column.numeric_scale
                             ),
@@ -231,42 +246,65 @@ module.exports = function(RED) {
                     });
                 }
                 
-                // 生成建表 SQL
-                const createTableSQL = generateCreateTableSQL(targetTable, schema, targetConnectionNode.dbType);
-                
+                let createTableSQL = null;
                 let executionResult = null;
                 let executed = false;
                 
-                // 如果配置為執行 SQL，則執行建表語句
-                if (node.executeSQL) {
+                // 產生 SQL（如果需要）
+                if (node.generateSql) {
+                    node.status({ fill: "blue", shape: "dot", text: "generating SQL..." });
+                    createTableSQL = generateCreateTableSQL(targetTable, schema, targetDbType);
+                }
+                
+                // 執行建表（如果需要且在 connection mode）
+                if (node.createTable && node.operationMode === 'connection') {
+                    if (!createTableSQL) {
+                        createTableSQL = generateCreateTableSQL(targetTable, schema, targetDbType);
+                    }
+                    
                     try {
+                        node.status({ fill: "blue", shape: "dot", text: `creating ${targetTable}...` });
+                        const targetClient = targetConnectionNode.getClient();
                         await targetClient.executeQuery(createTableSQL);
                         executed = true;
                         executionResult = 'Table created successfully';
                     } catch (error) {
                         executionResult = `Failed to create table: ${error.message}`;
+                        throw new Error(executionResult);
                     }
                 }
                 
+                // 組成輸出結果
                 const result = {
-                    operation: 'migrate',
                     sourceTable: sourceTable,
                     targetTable: targetTable,
                     sourceDbType: sourceConnectionNode.dbType,
-                    targetDbType: targetConnectionNode.dbType,
+                    targetDbType: targetDbType,
+                    operationMode: node.operationMode,
                     schema: schema,
-                    sql: createTableSQL,
-                    executed: executed,
-                    executionResult: executionResult,
-                    success: true,
-                    createdAt: new Date().toISOString()
+                    actions: {
+                        generateSql: node.generateSql,
+                        createTable: node.createTable && node.operationMode === 'connection'
+                    },
+                    processedAt: new Date().toISOString()
                 };
+                
+                // 包含 SQL（如果有產生）
+                if (createTableSQL) {
+                    result.sql = createTableSQL;
+                }
+                
+                // 包含執行結果（如果有執行）
+                if (node.createTable && node.operationMode === 'connection') {
+                    result.executed = executed;
+                    result.executionResult = executionResult;
+                }
                 
                 msg.payload = result;
                 node.send(msg);
                 
             } catch (error) {
-                throw new Error(`Create table operation failed: ${error.message}`);
+                throw new Error(`Schema processing failed: ${error.message}`);
             }
         }
         
@@ -346,6 +384,44 @@ module.exports = function(RED) {
                 tableCount: tables.length,
                 message: 'Connection successful'
             });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+    
+    // 觸發特定節點的連線狀態檢查
+    RED.httpAdmin.post('/schema-bridge/check-connections', async function(req, res) {
+        try {
+            const { nodeId } = req.body;
+            
+            if (!nodeId) {
+                return res.status(400).json({ error: 'Node ID is required' });
+            }
+            
+            const node = RED.nodes.getNode(nodeId);
+            
+            if (!node) {
+                return res.status(404).json({ error: 'Node not found' });
+            }
+            
+            // 檢查是否為 schema-bridge 節點
+            if (node.type !== 'schema-bridge') {
+                return res.status(400).json({ error: 'Invalid node type' });
+            }
+            
+            // 觸發連線狀態更新（異步執行，不等待結果）
+            if (typeof node.updateConnectionStatus === 'function') {
+                node.updateConnectionStatus().catch(err => {
+                    RED.log.warn(`Failed to update connection status for node ${nodeId}: ${err.message}`);
+                });
+            }
+            
+            res.json({ 
+                success: true, 
+                message: 'Connection status check triggered',
+                nodeId: nodeId
+            });
+            
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
