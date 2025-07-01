@@ -23,22 +23,33 @@
 - **智能型別轉換** - 自動對映最適合的資料型別
 - **SQL 即時生成** - 即時預覽 CREATE TABLE 語句
 
-### ⚡ 三種核心操作模式
+### ⚡ 雙核心操作模式
 
-#### 📊 Analyze (分析模式)
-- 讀取來源資料庫的 Schema 結構
-- 自動分析欄位型別和約束條件
-- 提供詳細的 Schema 報告
+#### 🔗 Database Connection Mode（資料庫連線模式）
+- **完整連接**：同時連接來源和目標資料庫
+- **雙重功能**：可選擇 Generate SQL 和/或 Create Table
+- **即時執行**：直接在目標資料庫建立表格
+- **狀態顯示**：`both connected` / `source only` / `target only`
 
-#### 🔄 Convert (轉換模式)
-- 將 Schema 轉換為目標資料庫格式
-- 智能型別對映和最佳化建議
+#### 📝 SQL Generation Mode（SQL 生成模式）
+- **輕量連接**：僅需來源資料庫連接
+- **類型選擇**：選擇目標資料庫類型（PostgreSQL, MSSQL, MySQL 等）
+- **純 SQL 輸出**：生成標準 CREATE TABLE 語句
+- **狀態顯示**：`source connected | postgres mode`
+
+### 🛠️ 簡化操作選項
+
+#### Generate SQL（預設啟用）
+- 自動分析來源 Schema 結構
+- 智能型別對映和轉換
 - 生成完整的 CREATE TABLE 語句
+- 支援約束條件和預設值
 
-#### 🚀 Migrate (遷移模式)
-- 完整的資料表遷移（結構 + 資料）
-- 支援批次處理大型資料集
-- 自動處理型別轉換和資料驗證
+#### Create Table（可選）
+- 在目標資料庫執行 SQL 語句
+- 自動建立資料表結構
+- 僅在 Connection Mode 下可用
+- 即時回饋執行狀態
 
 ## 🚀 快速開始
 
@@ -97,12 +108,28 @@ npm install oracledb ibm_db
 3. 在設定面板中選擇操作模式和參數
 
 #### Basic 標籤頁
-- **Operation**：選擇操作類型（Analyze/Convert/Migrate）
+
+**操作模式選擇**
+- **🔗 Database Connection Mode**：完整資料庫連接模式
+- **📝 SQL Generation Mode**：輕量 SQL 生成模式
+
+**Connection Mode 設定**
 - **Source Connection**：來源資料庫連接
 - **Target Connection**：目標資料庫連接
-- **Source/Target Table**：資料表名稱設定
+- **Source Table**：來源資料表名稱
+- **Target Table**：目標資料表名稱（可選）
+
+**Generation Mode 設定**
+- **Source Connection**：來源資料庫連接
+- **Target Database Type**：目標資料庫類型選擇
+- **Source Table**：來源資料表名稱
+
+**功能選擇**
+- **Generate SQL**：產生 CREATE TABLE 語句（預設啟用）
+- **Create Table**：在目標資料庫建立表格（僅 Connection Mode）
 
 #### Schema Editor 標籤頁
+- **Load Schema**：從來源資料庫載入表格結構
 - **即時編輯 Schema**：修改欄位名稱、型別、約束
 - **新增/刪除欄位**：自由調整資料表結構
 - **預覽功能**：即時查看轉換結果
@@ -113,11 +140,19 @@ npm install oracledb ibm_db
 
 ## 📖 操作模式詳解
 
-### 🔍 Analyze 模式
+### 🔗 Database Connection Mode
 
-**用途**：分析來源資料庫的 Schema 結構
+**適用場景**：需要直接在目標資料庫建立表格
 
-**輸入**：
+**設定需求**：
+- 來源資料庫連接
+- 目標資料庫連接
+
+**可用功能**：
+- ✅ Generate SQL
+- ✅ Create Table
+
+**輸入範例**：
 ```json
 {
   "tableName": "users"
@@ -127,17 +162,20 @@ npm install oracledb ibm_db
 **輸出範例**：
 ```json
 {
-  "operation": "analyze",
+  "operationMode": "connection",
   "sourceTable": "users",
+  "targetTable": "users_new",
   "sourceDbType": "mssql",
   "targetDbType": "postgres",
+  "generateSql": true,
+  "createTable": true,
   "schema": [
     {
       "originalName": "user_id",
       "name": "user_id",
       "originalType": "int",
       "standardType": "INTEGER",
-      "mappedType": "INTEGER",
+      "mappedType": "INTEGER", 
       "nullable": false,
       "defaultValue": null,
       "length": null,
@@ -145,79 +183,62 @@ npm install oracledb ibm_db
       "scale": 0
     }
   ],
-  "metadata": {
-    "totalColumns": 5,
-    "analyzedAt": "2024-01-15T10:30:00.000Z"
-  }
+  "sql": "CREATE TABLE users_new (\n  user_id INTEGER NOT NULL,\n  username VARCHAR(50),\n  ...\n);",
+  "success": true,
+  "message": "SQL generated and table created successfully",
+  "processedAt": "2024-01-15T10:30:00.000Z"
 }
 ```
 
-### 🔄 Convert 模式
+### 📝 SQL Generation Mode
 
-**用途**：轉換 Schema 為目標資料庫格式
+**適用場景**：僅需要生成 SQL 語句，不執行建表
 
-**功能**：
-- 自動型別對映
-- 約束條件轉換
-- SQL 語句生成
+**設定需求**：
+- 來源資料庫連接
+- 目標資料庫類型選擇
+
+**可用功能**：
+- ✅ Generate SQL
+- ❌ Create Table（自動禁用）
 
 **輸出範例**：
 ```json
 {
-  "operation": "convert",
-  "sourceTable": "users",
-  "targetTable": "users_migrated",
+  "operationMode": "generation",
+  "sourceTable": "products",
   "sourceDbType": "mssql",
   "targetDbType": "postgres",
+  "generateSql": true,
+  "createTable": false,
   "schema": [...],
-  "sql": "CREATE TABLE users_migrated (\n  user_id INTEGER NOT NULL,\n  username VARCHAR(50),\n  ...\n);",
-  "convertedAt": "2024-01-15T10:35:00.000Z"
-}
-```
-
-### 🚀 Migrate 模式
-
-**用途**：完整的資料遷移（結構 + 資料）
-
-**特色**：
-- 自動建立目標資料表
-- 批次資料傳輸
-- 進度追蹤和錯誤處理
-
-**輸出範例**：
-```json
-{
-  "operation": "migrate",
-  "sourceTable": "users",
-  "targetTable": "users_migrated",
-  "schema": [...],
-  "sql": "CREATE TABLE users_migrated (...);",
+  "sql": "CREATE TABLE products (\n  product_id INTEGER NOT NULL,\n  name VARCHAR(100),\n  ...\n);",
   "success": true,
-  "migratedRows": 1000,
-  "migratedAt": "2024-01-15T10:40:00.000Z"
+  "message": "SQL generated successfully",
+  "processedAt": "2024-01-15T10:35:00.000Z"
 }
 ```
 
 ## 🔗 工作流程範例
 
-### 基本 Schema 分析
+### 基本 SQL 生成（Generation Mode）
 ```
-[inject] → [schema-bridge(analyze)] → [debug]
-```
-
-### 跨資料庫轉換
-```
-[inject] → [schema-bridge(convert)] → [function] → [debug]
+[inject] → [schema-bridge(generation)] → [debug]
 ```
 
-### 完整資料遷移
+### 完整表格建立（Connection Mode）
 ```
-[inject] → [schema-bridge(migrate)] → [debug]
+[inject] → [schema-bridge(connection)] → [debug]
 ```
 
-### 複雜遷移流程
+### 批次 SQL 生成
 ```
-[inject] → [analyze] → [convert] → [customize] → [migrate] → [verify] → [debug]
+[inject] → [split] → [schema-bridge(generation)] → [join] → [debug]
+```
+
+### 先生成後建立的流程
+```
+[inject] → [generate-sql] → [validate] → [create-table] → [debug]
 ```
 
 ## 🔧 型別轉換對映表
@@ -270,6 +291,16 @@ Content-Type: application/json
 }
 ```
 
+### 檢查連接狀態
+```http
+POST /schema-bridge/check-connections
+Content-Type: application/json
+
+{
+  "nodeId": "schema-bridge-node-id"
+}
+```
+
 ### 獲取資料表清單
 ```http
 POST /schema-bridge/connection-tables
@@ -292,20 +323,6 @@ Content-Type: application/json
 ```
 
 ## 🔧 進階設定
-
-### 批次處理最佳化
-
-**小型資料表** (< 10,000 筆)
-- 批次大小：1000-5000
-- 適合快速遷移
-
-**中型資料表** (10,000-100,000 筆)
-- 批次大小：500-1000
-- 平衡效能與記憶體使用
-
-**大型資料表** (> 100,000 筆)
-- 批次大小：100-500
-- 避免記憶體不足
 
 ### 自訂 Schema 格式
 
@@ -331,41 +348,49 @@ Content-Type: application/json
 ]
 ```
 
+### 配置參數說明
+
+```javascript
+// 新的簡化配置格式
+{
+  "operationMode": "connection|generation",
+  "generateSql": true,        // 產生 SQL（預設啟用）
+  "createTable": false,       // 建立表格（預設禁用）
+  "targetDbType": "postgres", // 僅 Generation Mode 需要
+  "sourceTable": "users",
+  "targetTable": "users_new"  // 可選
+}
+```
+
 ## 🐛 故障排除
 
 ### 連接問題
 
-**1. 連接被拒絕**
+**1. 連接狀態顯示 "checking connections..."**
+- 等待幾秒讓系統完成連接測試
 - 檢查資料庫伺服器是否運行
 - 確認防火牆設定
-- 驗證連接埠是否正確
 
-**2. 驗證失敗**
-- 確認使用者名稱和密碼
-- 檢查使用者權限
+**2. "source only" 或 "target only" 狀態**
+- 檢查另一個資料庫連接設定
+- 確認使用者權限
 - 驗證資料庫存在
 
-**3. 驅動程式錯誤**
-```bash
-# 重新安裝驅動程式
-npm uninstall mssql pg mysql2
-npm install mssql pg mysql2
+**3. Generation Mode 下 Create Table 被禁用**
+- 這是正常行為，Generation Mode 只產生 SQL
+- 如需建表功能，請切換到 Connection Mode
 
-# 檢查安裝狀態
-npm list mssql pg mysql2
-```
+### Schema 載入問題
 
-### Schema 轉換問題
+**1. Load Schema 按鈕載入中不停止**
+- 檢查來源資料庫連接狀態
+- 確認表格名稱正確
+- 查看 Node-RED 日誌錯誤訊息
 
-**1. 型別不支援**
+**2. 型別轉換錯誤**
 - 查看型別對映表
-- 使用自訂 Schema 手動指定型別
-- 檢查 Node-RED 日誌
-
-**2. 資料遺失**
-- 檢查來源表格權限
-- 確認目標資料庫空間
-- 調整批次大小
+- 使用 Schema Editor 手動調整型別
+- 檢查來源資料庫版本支援
 
 ### 效能最佳化
 
@@ -378,18 +403,16 @@ npm list mssql pg mysql2
 }
 ```
 
-**2. 查詢最佳化**
-- 增加索引
-- 調整批次大小
-- 使用資料庫特定的最佳化選項
+**2. Schema 處理最佳化**
+- 使用具體表格名稱而非萬用字元
+- 避免載入過大的表格 Schema
+- 適當調整連接逾時設定
 
 ## 📁 範例檔案
 
 查看 `examples/` 目錄中的完整範例：
 
-- `example-flow.json` - 基本操作示範
-- `advanced-migration-flow.json` - 進階遷移流程
-- `custom-schema-example.json` - 自訂 Schema 範例
+- `example-flow.json` - 基本 SQL 生成和表格建立示範
 
 ## 🤝 貢獻
 

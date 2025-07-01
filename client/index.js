@@ -198,13 +198,13 @@ class DatabaseClient extends events.EventEmitter {
         };
         
         // 只加入非空的可選參數
-        if (this.config.db_locale && this.config.db_locale !== 'en_us.utf8') {
+        if (this.config.db_locale) {
             params.DB_LOCALE = this.config.db_locale;
         }
-        if (this.config.client_locale && this.config.client_locale !== 'en_us.utf8') {
+        if (this.config.client_locale) {
             params.CLIENT_LOCALE = this.config.client_locale;
         }
-        if (this.config.authentication && this.config.authentication !== 'server') {
+        if (this.config.authentication) {
             params.AUTHENTICATION = this.config.authentication.toLowerCase();
         }
         

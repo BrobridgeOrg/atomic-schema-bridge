@@ -8,11 +8,11 @@
             targetConnection: { value: "", type: "Schema Bridge Connection" },
             sourceTable: { value: "" },
             targetTable: { value: "" },
-            operation: { value: "analyze" },
-            outputFormat: { value: "json" },
-            generateSql: { value: false },
-            executeSQL: { value: false },
-            customSchema: { value: "[]" }
+            generateSql: { value: true },
+            createTable: { value: false },
+            customSchema: { value: "[]" },
+            operationMode: { value: "connection" }, // "connection" or "generation"
+            targetDbType: { value: "postgres" } // 用於 generation 模式
         },
         inputs: 1,
         outputs: 1,
@@ -26,6 +26,30 @@
         oneditprepare: function() {
             const node = this;
             
+            // 注入紅黑主題的額外樣式
+            if (!$('#schema-bridge-dark-theme').length) {
+                $('head').append(`
+                    <style id="schema-bridge-dark-theme">
+                        .mode-option:hover {
+                            transform: translateY(-2px);
+                            border-color: #dc3545 !important;
+                            background-color: #3a1a1a !important;
+                            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.2) !important;
+                        }
+                        .mode-option {
+                            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                        }
+                        .mode-option .fa {
+                            transition: all 0.3s ease;
+                        }
+                        .mode-option:hover .fa {
+                            transform: scale(1.1);
+                            text-shadow: 0 0 10px rgba(220, 53, 69, 0.6);
+                        }
+                    </style>
+                `);
+            }
+            
             // 初始化標籤頁
             const tabs = RED.tabs.create({
                 id: "node-schema-bridge-tabs",
@@ -33,6 +57,70 @@
                     $("#node-schema-bridge-tabs-content").children().hide();
                     $("#" + tab.id).show();
                 }
+            });
+            
+            // 模式切換邏輯
+            function updateModeDisplay() {
+                const mode = $('input[name="operationMode"]:checked').val();
+                
+                if (mode === 'connection') {
+                    // Database Connection Mode
+                    $('#target-connection-section').show();
+                    $('#target-dbtype-section').hide();
+                    $('#create-table-option').show();
+                    $('#node-input-generateSql').prop('disabled', false);
+                    $('#node-input-createTable').prop('disabled', false);
+                    $('#mode-info-text').text('🔗 完整連接模式：可以產生 SQL 指令並在目標資料庫建立表格');
+                    
+                    // 更新模式按鈕樣式 - 紅黑主題
+                    $('#connection-mode-label').css({
+                        'border-color': '#dc3545',
+                        'background-color': '#4a1a1a',
+                        'box-shadow': '0 0 10px rgba(220, 53, 69, 0.3)'
+                    });
+                    $('#generation-mode-label').css({
+                        'border-color': '#444',
+                        'background-color': '#333',
+                        'box-shadow': 'none'
+                    });
+                } else {
+                    // SQL Generation Mode
+                    $('#target-connection-section').hide();
+                    $('#target-dbtype-section').show();
+                    $('#create-table-option').hide();
+                    $('#node-input-generateSql').prop('checked', true).prop('disabled', true);
+                    $('#node-input-createTable').prop('checked', false).prop('disabled', true);
+                    $('#mode-info-text').text('📝 SQL 生成模式：僅產生 SQL 指令，不需要連接目標資料庫');
+                    
+                    // 更新模式按鈕樣式 - 紅黑主題
+                    $('#connection-mode-label').css({
+                        'border-color': '#444',
+                        'background-color': '#333',
+                        'box-shadow': 'none'
+                    });
+                    $('#generation-mode-label').css({
+                        'border-color': '#dc3545',
+                        'background-color': '#4a1a1a',
+                        'box-shadow': '0 0 10px rgba(220, 53, 69, 0.3)'
+                    });
+                }
+            }
+            
+            // 初始化模式設定
+            const initialMode = node.operationMode || 'connection';
+            $(`#node-input-operationMode-${initialMode}`).prop('checked', true);
+            updateModeDisplay();
+            
+            // 模式切換事件監聽
+            $('input[name="operationMode"]').change(function() {
+                updateModeDisplay();
+            });
+            
+            // 模式按鈕點擊事件（美化的點擊體驗）
+            $('.mode-option').click(function() {
+                const radioInput = $(this).find('input[type="radio"]');
+                radioInput.prop('checked', true);
+                updateModeDisplay();
             });
             
             tabs.addTab({
@@ -70,10 +158,19 @@
                 const originalText = loadButton.html();
                 loadButton.html('<i class="fa fa-spinner fa-spin"></i> Loading...').prop('disabled', true);
                 
-                loadSourceSchema().finally(() => {
-                    // 恢復按鈕狀態
+                // 確保按鈕狀態總是能夠恢復
+                const restoreButton = () => {
                     loadButton.html(originalText).prop('disabled', false);
-                });
+                };
+                
+                loadSourceSchema()
+                    .then(() => {
+                        restoreButton();
+                    })
+                    .catch((error) => {
+                        restoreButton();
+                        console.error('Load schema error:', error);
+                    });
             }
             
             // 載入 schema
@@ -81,22 +178,35 @@
                 const sourceConnection = $('#node-input-sourceConnection').val();
                 const sourceTable = $('#node-input-sourceTable').val();
                 
-                if (!sourceConnection || !sourceTable) return;
+                if (!sourceConnection || !sourceTable) {
+                    return Promise.reject(new Error('Missing connection or table name'));
+                }
                 
-                $.ajax({
-                    url: '/schema-bridge/connection-schema',
-                    method: 'POST',
-                    data: JSON.stringify({
-                        connectionId: sourceConnection,
-                        tableName: sourceTable
-                    }),
-                    contentType: 'application/json'
-                })
-                .done(function(schema) {
-                    displaySchemaEditor(schema);
-                })
-                .fail(function(xhr) {
-                    RED.notify('Failed to load schema: ' + (xhr.responseJSON?.error || 'Unknown error'), 'error');
+                return new Promise((resolve, reject) => {
+                    $.ajax({
+                        url: '/schema-bridge/connection-schema',
+                        method: 'POST',
+                        data: JSON.stringify({
+                            connectionId: sourceConnection,
+                            tableName: sourceTable
+                        }),
+                        contentType: 'application/json',
+                        timeout: 30000 // 30秒超時
+                    })
+                    .done(function(schema) {
+                        try {
+                            displaySchemaEditor(schema);
+                            RED.notify('Schema loaded successfully!', 'success');
+                            resolve(schema);
+                        } catch (error) {
+                            reject(error);
+                        }
+                    })
+                    .fail(function(xhr, status, error) {
+                        const errorMsg = xhr.responseJSON?.error || xhr.responseText || error || 'Unknown error';
+                        RED.notify('Failed to load schema: ' + errorMsg, 'error');
+                        reject(new Error(errorMsg));
+                    });
                 });
             }
             
@@ -216,22 +326,42 @@
             
             // 生成 SQL 預覽
             function generateSqlPreview() {
-                const targetConnection = $('#node-input-targetConnection').val();
                 const targetTable = $('#node-input-targetTable').val() || 'target_table';
+                const operationMode = $('input[name="operationMode"]:checked').val();
                 
-                if (!targetConnection) {
-                    RED.notify('Please select a target connection first', 'warning');
-                    return;
+                let targetDbType;
+                
+                if (operationMode === 'connection') {
+                    // Database Connection Mode
+                    const targetConnection = $('#node-input-targetConnection').val();
+                    if (!targetConnection) {
+                        RED.notify('Please select a target connection first', 'warning');
+                        return;
+                    }
+                    
+                    const targetConnectionNode = RED.nodes.node(targetConnection);
+                    targetDbType = targetConnectionNode ? targetConnectionNode.dbType : 'postgres';
+                } else {
+                    // SQL Generation Mode
+                    targetDbType = $('#node-input-targetDbType').val();
                 }
                 
                 const schema = collectSchemaData();
                 
-                // 取得目標資料庫類型
-                const targetConnectionNode = RED.nodes.node(targetConnection);
-                const targetDbType = targetConnectionNode ? targetConnectionNode.dbType : 'postgres';
+                if (schema.length === 0) {
+                    RED.notify('No schema data available. Please load schema first.', 'warning');
+                    return;
+                }
                 
                 const sql = generateCreateTableSQL(targetDbType, targetTable, schema);
                 $('#sql-output').val(sql);
+                
+                // 在 SQL 輸出前加入註解說明
+                const modeInfo = operationMode === 'connection' ? 
+                    `-- Generated in Database Connection Mode for ${targetDbType}\n-- This SQL can be executed directly on the target database\n\n` :
+                    `-- Generated in SQL Generation Mode for ${targetDbType}\n-- Target database connection not required\n\n`;
+                
+                $('#sql-output').val(modeInfo + sql);
                 
                 // 切換到 SQL 標籤
                 tabs.activateTab("schema-bridge-tab-sql");
@@ -305,7 +435,18 @@
             }
         },
         
+        oneditcancel: function() {
+            // 清理注入的樣式
+            $('#schema-bridge-dark-theme').remove();
+        },
+        
         oneditsave: function() {
+            // 清理注入的樣式
+            $('#schema-bridge-dark-theme').remove();
+            
+            // 儲存操作模式
+            this.operationMode = $('input[name="operationMode"]:checked').val();
+            
             // 儲存自訂 schema
             const schema = [];
             $('#schema-editor-container tbody tr').each(function() {
@@ -320,6 +461,23 @@
                 }
             });
             this.customSchema = JSON.stringify(schema);
+            
+            // 配置完成後觸發連線狀態檢查
+            const nodeId = this.id;
+            if (nodeId) {
+                setTimeout(() => {
+                    $.ajax({
+                        url: '/schema-bridge/check-connections',
+                        method: 'POST',
+                        data: JSON.stringify({ nodeId: nodeId }),
+                        contentType: 'application/json'
+                    }).done(function(result) {
+                        console.log('Connection status checked for node:', nodeId);
+                    }).fail(function(xhr) {
+                        console.warn('Failed to check connection status:', xhr.responseText);
+                    });
+                }, 1000); // 等待節點儲存完成後再檢查
+            }
         }
     });
 </script>
@@ -337,15 +495,32 @@
     <div id="node-schema-bridge-tabs-content" style="min-height: 400px;">
         <!-- Basic Tab -->
         <div id="schema-bridge-tab-basic" style="display:none">
-            <div class="form-row">
-                <label for="node-input-operation"><i class="fa fa-cogs"></i> Operation</label>
-                <select id="node-input-operation">
-                    <option value="analyze">Analyze Schema</option>
-                    <option value="convert">Convert Schema</option>
-                    <option value="migrate">Create Table</option>
-                </select>
+            <!-- Operation Mode Selection -->
+            <div class="form-row" style="background: linear-gradient(135deg, #2a2a2a 0%, #1e1e1e 100%); padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #555;">
+                <label style="font-weight: bold; margin-bottom: 10px; display: block; color: #e0e0e0;"><i class="fa fa-toggle-on" style="color: #dc3545;"></i> Operation Mode</label>
+                
+                <div style="display: flex; gap: 15px;">
+                    <label class="mode-option" style="flex: 1; cursor: pointer; padding: 12px; border: 2px solid #444; border-radius: 8px; text-align: center; transition: all 0.3s; background-color: #333;" id="connection-mode-label">
+                        <input type="radio" name="operationMode" value="connection" id="node-input-operationMode-connection" style="display: none;">
+                        <div>
+                            <i class="fa fa-plug" style="font-size: 24px; color: #dc3545; margin-bottom: 8px; display: block;"></i>
+                            <strong style="color: #e0e0e0;">🔗 Database Connection Mode</strong>
+                            <div style="font-size: 11px; color: #bbb; margin-top: 4px;">Connect to target database<br/>Generate SQL + Create Tables</div>
+                        </div>
+                    </label>
+                    
+                    <label class="mode-option" style="flex: 1; cursor: pointer; padding: 12px; border: 2px solid #444; border-radius: 8px; text-align: center; transition: all 0.3s; background-color: #333;" id="generation-mode-label">
+                        <input type="radio" name="operationMode" value="generation" id="node-input-operationMode-generation" style="display: none;">
+                        <div>
+                            <i class="fa fa-file-code-o" style="font-size: 24px; color: #dc3545; margin-bottom: 8px; display: block;"></i>
+                            <strong style="color: #e0e0e0;">📝 SQL Generation Mode</strong>
+                            <div style="font-size: 11px; color: #bbb; margin-top: 4px;">Select database type only<br/>Generate SQL only (no connection)</div>
+                        </div>
+                    </label>
+                </div>
             </div>
             
+            <!-- Source Configuration -->
             <div class="form-row">
                 <label for="node-input-sourceConnection"><i class="fa fa-database"></i> Source Connection</label>
                 <input type="text" id="node-input-sourceConnection">
@@ -355,15 +530,27 @@
                 <label for="node-input-sourceTable"><i class="fa fa-table"></i> Source Table</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="node-input-sourceTable" placeholder="Enter table name..." style="flex: 1;">
-                    <button type="button" id="load-schema-btn" class="red-ui-button" style="width: 120px; background-color: #D4A574; border-color: #C49564; color: #2a2a2a; font-weight: bold;">
+                    <button type="button" id="load-schema-btn" class="red-ui-button" style="width: 120px; background-color: #4285F4; border-color: #3367D6; color: white; font-weight: bold;">
                         <i class="fa fa-refresh"></i> Load Schema
                     </button>
                 </div>
             </div>
             
-            <div class="form-row">
+            <!-- Target Configuration -->
+            <div id="target-connection-section" class="form-row">
                 <label for="node-input-targetConnection"><i class="fa fa-database"></i> Target Connection</label>
                 <input type="text" id="node-input-targetConnection">
+            </div>
+            
+            <div id="target-dbtype-section" class="form-row" style="display: none;">
+                <label for="node-input-targetDbType"><i class="fa fa-server"></i> Target Database Type</label>
+                <select id="node-input-targetDbType">
+                    <option value="postgres">PostgreSQL</option>
+                    <option value="mssql">Microsoft SQL Server</option>
+                    <option value="mysql">MySQL</option>
+                    <option value="oracle">Oracle Database</option>
+                    <option value="informix">IBM Informix</option>
+                </select>
             </div>
             
             <div class="form-row">
@@ -371,23 +558,29 @@
                 <input type="text" id="node-input-targetTable" placeholder="Leave empty to use source table name">
             </div>
             
-            <div class="form-row">
-                <label for="node-input-outputFormat"><i class="fa fa-file-code-o"></i> Output Format</label>
-                <select id="node-input-outputFormat">
-                    <option value="json">JSON</option>
-                    <option value="sql">SQL</option>
-                    <option value="both">Both</option>
-                </select>
+            <div class="form-row" style="border-top: 1px solid #ddd; padding-top: 15px; margin-top: 20px;">
+                <label style="font-weight: bold;"><i class="fa fa-cogs"></i> Actions</label>
             </div>
             
             <div class="form-row">
-                <input type="checkbox" id="node-input-generateSql" style="display: inline-block; width: auto; vertical-align: top;">
-                <label for="node-input-generateSql" style="width: auto;">Generate SQL Commands</label>
+                <input type="checkbox" id="node-input-generateSql" style="display: inline-block; width: auto; vertical-align: top;" checked>
+                <label for="node-input-generateSql" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-code"></i> Generate SQL Commands
+                    <span style="color: #666; font-size: 12px; display: block; margin-left: 20px;">產生 CREATE TABLE SQL 指令</span>
+                </label>
             </div>
             
-            <div class="form-row">
-                <input type="checkbox" id="node-input-executeSQL" style="display: inline-block; width: auto; vertical-align: top;">
-                <label for="node-input-executeSQL" style="width: auto;">Execute SQL (Create Table)</label>
+            <div class="form-row" id="create-table-option">
+                <input type="checkbox" id="node-input-createTable" style="display: inline-block; width: auto; vertical-align: top;">
+                <label for="node-input-createTable" style="width: auto; font-weight: normal;">
+                    <i class="fa fa-table"></i> Create Table
+                    <span style="color: #666; font-size: 12px; display: block; margin-left: 20px;">執行 SQL 指令在目標資料庫建立表格</span>
+                </label>
+            </div>
+            
+            <div id="mode-info" style="background-color: #2a2a2a; border: 1px solid #555; padding: 10px; border-radius: 4px; margin-top: 10px; font-size: 12px; color: #bbb;">
+                <i class="fa fa-info-circle" style="color: #dc3545;"></i> 
+                <span id="mode-info-text">您可以同時選擇兩個選項：產生 SQL 並執行建表</span>
             </div>
         </div>
         
@@ -422,45 +615,71 @@
 </script>
 
 <script type="text/html" data-help-name="schema-bridge">
-    <p>The <b>Schema Bridge</b> node enables database schema analysis, conversion, and migration between different database systems.</p>
+    <p>The <b>Schema Bridge</b> node enables database schema migration between different database systems with two operation modes.</p>
     
-    <h3>Features</h3>
+    <h3>🔀 Operation Modes</h3>
     <ul>
-        <li><b>Schema Analysis</b> - Analyze source database table structure</li>
-        <li><b>Visual Schema Editor</b> - Modify column names, data types, and constraints</li>
-        <li><b>Smart Type Mapping</b> - Automatic data type conversion between databases</li>
-        <li><b>SQL Generation</b> - Generate CREATE TABLE scripts</li>
-        <li><b>Table Creation</b> - Execute CREATE TABLE statements on target database</li>
+        <li><b>🔗 Database Connection Mode</b> - Connect to target database, generate SQL + create tables</li>
+        <li><b>📝 SQL Generation Mode</b> - Select database type only, generate SQL without connection</li>
     </ul>
 
-    <h3>Supported Databases</h3>
+    <h3>✨ Core Functions</h3>
+    <ul>
+        <li><b>Generate SQL</b> - 產生 CREATE TABLE SQL 指令</li>
+        <li><b>Create Table</b> - 執行 SQL 指令在目標資料庫建立表格 (Connection Mode only)</li>
+    </ul>
+
+    <h3>🚀 Features</h3>
+    <ul>
+        <li><b>Dual Operation Modes</b> - Choose between full connection or SQL-only mode</li>
+        <li><b>Visual Schema Editor</b> - Modify column names, data types, and constraints</li>
+        <li><b>Smart Type Mapping</b> - Automatic data type conversion between databases</li>
+        <li><b>Real-time Connection Status</b> - Automatic connection health monitoring</li>
+        <li><b>SQL Preview</b> - Preview generated SQL commands before execution</li>
+    </ul>
+
+    <h3>🎯 Supported Databases</h3>
     <p>Microsoft SQL Server, PostgreSQL, MySQL, Oracle Database, IBM Informix</p>
 
-    <h3>Configuration</h3>
+    <h3>⚙️ Configuration</h3>
+    
+    <h4>Operation Mode Selection</h4>
+    <ul>
+        <li><b>Database Connection Mode</b> - Requires both source and target database connections</li>
+        <li><b>SQL Generation Mode</b> - Requires only source connection + target database type selection</li>
+    </ul>
     
     <h4>Basic Tab</h4>
     <ul>
-        <li><b>Operation</b> - Choose analysis, conversion, or table creation</li>
-        <li><b>Source/Target Connections</b> - Select configured database connections</li>
-        <li><b>Tables</b> - Choose source table and specify target table name</li>
-        <li><b>Output Format</b> - JSON, SQL, or both</li>
-        <li><b>Options</b> - SQL generation and execution settings</li>
+        <li><b>Source Connection</b> - 來源資料庫連接 (required in both modes)</li>
+        <li><b>Source Table</b> - 來源表格名稱</li>
+        <li><b>Target Connection</b> - 目標資料庫連接 (Connection Mode only)</li>
+        <li><b>Target Database Type</b> - 目標資料庫類型 (Generation Mode only)</li>
+        <li><b>Target Table</b> - 目標表格名稱（可留空使用來源表格名）</li>
+        <li><b>Generate SQL</b> - 產生 CREATE TABLE SQL 指令</li>
+        <li><b>Create Table</b> - 執行 SQL 在目標資料庫建立表格 (Connection Mode only)</li>
     </ul>
     
     <h4>Schema Editor Tab</h4>
     <ul>
-        <li><b>Visual Editor</b> - Modify schema structure interactively</li>
-        <li><b>Column Management</b> - Add, remove, or rename columns</li>
-        <li><b>Type Mapping</b> - Adjust data type conversions</li>
-        <li><b>Constraints</b> - Set nullable and default values</li>
+        <li><b>Visual Editor</b> - 視覺化修改 schema 結構</li>
+        <li><b>Column Management</b> - 新增、刪除或重新命名欄位</li>
+        <li><b>Type Mapping</b> - 調整資料型態轉換</li>
+        <li><b>Constraints</b> - 設定 nullable 和預設值</li>
     </ul>
     
     <h4>SQL Output Tab</h4>
     <ul>
-        <li><b>Preview</b> - View generated SQL commands</li>
-        <li><b>Copy</b> - Copy SQL to clipboard for manual execution</li>
+        <li><b>Preview</b> - 預覽產生的 SQL 指令</li>
+        <li><b>Copy</b> - 複製 SQL 到剪貼板以便手動執行</li>
     </ul>
 
-    <h3>Outputs</h3>
-    <p>The node outputs schema information, conversion results, and table creation status based on the selected operation and format.</p>
+    <h3>📤 Outputs</h3>
+    <p>根據選擇的模式和動作，節點會輸出 schema 資訊、SQL 指令和/或表格建立狀態。</p>
+    
+    <h4>Connection Mode Output</h4>
+    <p>Includes connection details, SQL commands, and execution results (if table creation is enabled).</p>
+    
+    <h4>Generation Mode Output</h4>
+    <p>Includes target database type, SQL commands for the specified database type, no execution results.</p>
 </script> 
