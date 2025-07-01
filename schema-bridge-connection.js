@@ -26,13 +26,13 @@ module.exports = function (RED) {
         // 通用配置
         this.connConfig = {
             server: n.server,
-            port: Number(n.port) || this.getDefaultPort(this.dbType),
+            port: n.port ? Number(n.port) : this.getDefaultPort(this.dbType),
             database: n.database,
             username: this.credentials.username,
             password: this.credentials.password,
-            connectionTimeout: Number(n.connectionTimeout) || 15000,
-            requestTimeout: Number(n.requestTimeout) || 15000,
-            connectionRetryInterval: Number(n.connectionRetryInterval) || 3000
+            connectionTimeout: n.connectionTimeout ? Number(n.connectionTimeout) : 15000,
+            requestTimeout: n.requestTimeout ? Number(n.requestTimeout) : 15000,
+            connectionRetryInterval: n.connectionRetryInterval ? Number(n.connectionRetryInterval) : 3000
         };
 
         // 驗證必要的配置

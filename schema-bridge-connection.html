@@ -22,7 +22,7 @@
                 required: true
             },
             port: {
-                value: 1433,
+                value: "",
                 required: true,
                 validate: RED.validators.number()
             },
@@ -117,11 +117,11 @@
             $('#node-config-input-dbType').val(node.dbType);
             
             // 顯示/隱藏特定欄位的函數
-            function toggleFields(dbType) {
+            function toggleFields(dbType, isInitialLoad = false) {
                 // 隱藏所有特定欄位
                 $('.db-specific').hide();
                 
-                // 重設預設 port
+                // 只在初始載入且沒有設定 port 時才設定預設值
                 const defaultPorts = {
                     mssql: 1433,
                     postgres: 5432,
@@ -130,7 +130,12 @@
                     informix: 9088
                 };
                 
-                if (!$('#node-config-input-port').val() || $('#node-config-input-port').val() == node.port) {
+                // 只有在以下情況才設定預設 port：
+                // 1. 初始載入且節點沒有設定 port
+                // 2. 欄位為空
+                if (isInitialLoad && (!node.port || node.port === '')) {
+                    $('#node-config-input-port').val(defaultPorts[dbType] || 1433);
+                } else if (!$('#node-config-input-port').val()) {
                     $('#node-config-input-port').val(defaultPorts[dbType] || 1433);
                 }
                 
@@ -154,13 +159,34 @@
                 }
             }
             
+            // 儲存當前選擇的資料庫類型，用於檢測變更
+            let currentDbType = node.dbType;
+            
             // 監聽資料庫類型變更
             $('#node-config-input-dbType').change(function() {
-                toggleFields($(this).val());
+                const newDbType = $(this).val();
+                const currentPort = $('#node-config-input-port').val();
+                
+                // 檢查當前 port 是否是前一個資料庫類型的預設值
+                const defaultPorts = {
+                    mssql: 1433,
+                    postgres: 5432,
+                    mysql: 3306,
+                    oracle: 1521,
+                    informix: 9088
+                };
+                
+                // 只有當前 port 是前一個類型的預設值時，才自動更新
+                if (currentPort == defaultPorts[currentDbType]) {
+                    $('#node-config-input-port').val(defaultPorts[newDbType] || 1433);
+                }
+                
+                currentDbType = newDbType;
+                toggleFields(newDbType);
             });
             
-            // 初始化顯示
-            toggleFields(node.dbType);
+            // 初始化顯示（標記為初始載入）
+            toggleFields(node.dbType, true);
             
             // 測試連接按鈕
             $('#test-connection-btn').click(function() {
