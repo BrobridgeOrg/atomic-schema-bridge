@@ -2,6 +2,56 @@ module.exports = function(RED) {
     const DatabaseClient = require('./client');
     const SchemaMapper = require('./schema-mapper');
 
+    // 幫助函數：從連接節點獲取資料庫類型
+    function getConnectionDbType(connectionNode) {
+        if (!connectionNode) {
+            return 'unknown';
+        }
+        
+        // 如果節點有明確的 dbType 屬性（Schema Bridge Connection 類型）
+        if (connectionNode.dbType) {
+            return connectionNode.dbType;
+        }
+        
+        // 根據節點類型判斷資料庫類型
+        switch (connectionNode.type) {
+            case 'PostgreSQL Connection':
+            case 'postgresql-connection':
+                return 'postgres';
+            case 'MySQL Connection':
+            case 'mysql-connection':
+                return 'mysql';
+            case 'Oracle Connection':
+            case 'oracle-connection':
+                return 'oracle';
+            case 'MSSQL Connection':
+            case 'mssql-connection':
+                return 'mssql';
+            case 'Informix Connection':
+            case 'informix-connection':
+                return 'informix';
+            case 'Schema Bridge Connection':
+                return connectionNode.dbType || 'unknown';
+            default:
+                // 嘗試從節點名稱推斷
+                const nodeTypeLower = (connectionNode.type || '').toLowerCase();
+                if (nodeTypeLower.includes('postgres') || nodeTypeLower.includes('postgresql')) {
+                    return 'postgres';
+                } else if (nodeTypeLower.includes('mysql')) {
+                    return 'mysql';
+                } else if (nodeTypeLower.includes('oracle')) {
+                    return 'oracle';
+                } else if (nodeTypeLower.includes('mssql') || nodeTypeLower.includes('sqlserver')) {
+                    return 'mssql';
+                } else if (nodeTypeLower.includes('informix')) {
+                    return 'informix';
+                }
+                
+                console.warn(`Unknown connection node type: ${connectionNode.type}, defaulting to 'unknown'`);
+                return 'unknown';
+        }
+    }
+
     function SchemaBridgeNode(config) {
         RED.nodes.createNode(this, config);
         
@@ -85,7 +135,7 @@ module.exports = function(RED) {
                 
                 // 根據資料庫類型選擇適當的測試查詢
                 let testQuery = 'SELECT 1';
-                if (connectionNode.dbType === 'oracle') {
+                if (getConnectionDbType(connectionNode) === 'oracle') {
                     testQuery = 'SELECT 1 FROM DUAL';
                 }
                 
@@ -207,7 +257,7 @@ module.exports = function(RED) {
             let targetDbType, targetConnectionNode = null;
             if (node.operationMode === 'connection') {
                 targetConnectionNode = RED.nodes.getNode(node.targetConnection);
-                targetDbType = targetConnectionNode.dbType;
+                targetDbType = getConnectionDbType(targetConnectionNode);
             } else {
                 targetDbType = node.targetDbType;
             }
@@ -230,18 +280,27 @@ module.exports = function(RED) {
                     
                     // 轉換 schema 格式
                     schema = rawSchema.map(column => {
-                        const standardType = mapper.normalizeType(column.data_type, sourceConnectionNode.dbType);
+
+                        
+                        // 確保data_type欄位存在
+                        const dataType = column.data_type || column.DATA_TYPE || 'VARCHAR';
+                        if (!dataType || dataType === 'VARCHAR') {
+                            console.warn(`[SchemaBridge] Missing data_type for column ${column.column_name || column.COLUMN_NAME}, using default: VARCHAR`);
+                        }
+                        
+                        const convertedType = mapper.convertType(
+                            dataType, 
+                            getConnectionDbType(sourceConnectionNode), 
+                            targetDbType, 
+                            column.character_maximum_length || column.CHARACTER_MAXIMUM_LENGTH, 
+                            column.numeric_scale || column.NUMERIC_SCALE
+                        );
                         
                         return {
-                            name: column.column_name,
-                            type: mapper.convertToTarget(
-                                standardType, 
-                                targetDbType, 
-                                column.character_maximum_length, 
-                                column.numeric_scale
-                            ),
-                            nullable: column.is_nullable === 'YES',
-                            defaultValue: column.column_default
+                            name: column.column_name || column.COLUMN_NAME,
+                            type: convertedType,
+                            nullable: (column.is_nullable || column.IS_NULLABLE || column.nullable || column.NULLABLE) === 'YES' || (column.is_nullable || column.IS_NULLABLE || column.nullable || column.NULLABLE) === 'Y',
+                            defaultValue: column.column_default || column.COLUMN_DEFAULT || column.data_default || column.DATA_DEFAULT
                         };
                     });
                 }
@@ -278,7 +337,7 @@ module.exports = function(RED) {
                 const result = {
                     sourceTable: sourceTable,
                     targetTable: targetTable,
-                    sourceDbType: sourceConnectionNode.dbType,
+                    sourceDbType: getConnectionDbType(sourceConnectionNode),
                     targetDbType: targetDbType,
                     operationMode: node.operationMode,
                     schema: schema,
@@ -350,17 +409,23 @@ module.exports = function(RED) {
             
             // 轉換為編輯器格式
             const editorSchema = schema.map(column => {
-                const standardType = mapper.normalizeType(column.data_type, connectionNode.dbType);
+
+                
+                // 確保data_type欄位存在
+                const dataType = column.data_type || column.DATA_TYPE || 'VARCHAR';
+                if (!dataType || dataType === 'VARCHAR') {
+                    console.warn(`[SchemaBridge API] Missing data_type for column ${column.column_name || column.COLUMN_NAME}, using default: VARCHAR`);
+                }
                 
                 return {
-                    name: column.column_name,
-                    type: column.data_type,
-                    mappedType: standardType,
-                    nullable: column.is_nullable === 'YES',
-                    defaultValue: column.column_default,
-                    length: column.character_maximum_length,
-                    precision: column.numeric_precision,
-                    scale: column.numeric_scale
+                    name: column.column_name || column.COLUMN_NAME,
+                    type: dataType,
+                    sourceDbType: getConnectionDbType(connectionNode),
+                    nullable: (column.is_nullable || column.IS_NULLABLE || column.nullable || column.NULLABLE) === 'YES' || (column.is_nullable || column.IS_NULLABLE || column.nullable || column.NULLABLE) === 'Y',
+                    defaultValue: column.column_default || column.COLUMN_DEFAULT || column.data_default || column.DATA_DEFAULT,
+                    length: column.character_maximum_length || column.CHARACTER_MAXIMUM_LENGTH,
+                    precision: column.numeric_precision || column.NUMERIC_PRECISION,
+                    scale: column.numeric_scale || column.NUMERIC_SCALE
                 };
             });
             
@@ -384,6 +449,28 @@ module.exports = function(RED) {
                 tableCount: tables.length,
                 message: 'Connection successful'
             });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+    
+    RED.httpAdmin.get('/schema-bridge/supported-types/:dbType', function(req, res) {
+        try {
+            const dbType = req.params.dbType;
+            const mapper = new SchemaMapper();
+            const supportedTypes = mapper.getSupportedTypesForDatabase(dbType);
+            res.json(supportedTypes);
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+    
+    RED.httpAdmin.post('/schema-bridge/convert-type', function(req, res) {
+        try {
+            const { sourceType, sourceDbType, targetDbType, precision, scale } = req.body;
+            const mapper = new SchemaMapper();
+            const targetType = mapper.convertType(sourceType, sourceDbType, targetDbType, precision, scale);
+            res.json({ targetType });
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
