@@ -5,13 +5,11 @@
     "main": "schema-bridge.js",
     "dependencies": {
         "events": "^3.3.0",
-        "mssql": "^9.1.1",
-        "mysql2": "^3.6.0",
-        "pg": "^8.8.0"
-    },
-    "optionalDependencies": {
+        "mssql": "^11.0.1",
+        "mysql2": "^3.11.3",
+        "pg": "^8.12.0",
         "ibm_db": "^3.3.2",
-        "oracledb": "^5.5.0"
+        "oracledb": "^6.8.0"
     },
     "keywords": [
         "node-red",
@@ -27,3 +25,4 @@
         }
     }
 }
+ 
