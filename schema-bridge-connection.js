@@ -43,10 +43,18 @@ module.exports = function (RED) {
         
         if (!this.connConfig.database) {
             node.error('Database name is required but not provided');
+            this.connConfig.database = 'defaultdb'; // 設定預設值避免 undefined
         }
         
         if (!this.connConfig.username) {
             node.error('Username is required but not provided');
+            this.connConfig.username = 'defaultuser'; // 設定預設值避免 undefined
+        }
+        
+        // 確保 dbType 不是 undefined
+        if (!this.dbType) {
+            node.error('Database type is required but not provided');
+            this.dbType = 'mssql'; // 設定預設值避免 undefined
         }
         
         // 記錄配置（不包含密碼）
@@ -121,25 +129,25 @@ module.exports = function (RED) {
         // 設置事件監聽
         this.client.on('disconnect', () => {
             this.status = 'disconnected';
-            node.log(`Disconnected from ${this.dbType.toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
+            node.log(`Disconnected from ${(this.dbType || 'unknown').toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
             this.instance.emit('status', { fill: 'red', shape: 'ring', text: 'disconnected' });
         });
 
         this.client.on('reconnect', () => {
             this.status = 'reconnecting';
-            node.log(`Reconnecting to ${this.dbType.toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
+            node.log(`Reconnecting to ${(this.dbType || 'unknown').toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
             this.instance.emit('status', { fill: 'yellow', shape: 'ring', text: 'reconnecting' });
         });
 
         this.client.on('connected', (err) => {
             if (err) {
-                node.error(`Failed to connect to ${this.dbType.toUpperCase()} server: ${err}`);
+                node.error(`Failed to connect to ${(this.dbType || 'unknown').toUpperCase()} server: ${err}`);
                 this.status = 'disconnected';
                 this.instance.emit('status', { fill: 'red', shape: 'ring', text: 'error' });
                 return;
             }
 
-            node.log(`Connected to ${this.dbType.toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
+            node.log(`Connected to ${(this.dbType || 'unknown').toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
             this.status = 'connected';
             this.instance.emit('status', { fill: 'green', shape: 'dot', text: 'connected' });
         });
@@ -151,7 +159,7 @@ module.exports = function (RED) {
 
         // 延遲初始連接，避免在節點啟動時就連接
         // 連接將在第一次使用時建立
-        node.log(`Schema Bridge Connection node initialized for ${this.dbType.toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
+        node.log(`Schema Bridge Connection node initialized for ${(this.dbType || 'unknown').toUpperCase()} server: ${node.connConfig.server}:${node.connConfig.port}`);
 
         // 提供給其他節點使用的方法
         this.getClient = function () {
