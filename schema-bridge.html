@@ -46,6 +46,137 @@
                             transform: scale(1.1);
                             text-shadow: 0 0 10px rgba(220, 53, 69, 0.6);
                         }
+                        
+                        /* Nullable master checkbox 樣式 */
+                        #nullable-master-checkbox {
+                            appearance: none;
+                            width: 16px;
+                            height: 16px;
+                            border: 2px solid #666;
+                            border-radius: 3px;
+                            background: #2a2a2a;
+                            position: relative;
+                            transition: all 0.3s ease;
+                        }
+                        
+                        #nullable-master-checkbox:checked {
+                            background: #dc3545;
+                            border-color: #dc3545;
+                        }
+                        
+                        #nullable-master-checkbox:checked::after {
+                            content: '✓';
+                            position: absolute;
+                            top: -2px;
+                            left: 2px;
+                            color: white;
+                            font-size: 12px;
+                            font-weight: bold;
+                        }
+                        
+                        #nullable-master-checkbox:indeterminate {
+                            background: linear-gradient(135deg, #dc3545 0%, #dc3545 50%, #666 50%, #666 100%);
+                            border-color: #dc3545;
+                        }
+                        
+                        #nullable-master-checkbox:indeterminate::after {
+                            content: '◗';
+                            position: absolute;
+                            top: -2px;
+                            left: 2px;
+                            color: white;
+                            font-size: 12px;
+                            font-weight: bold;
+                        }
+                        
+                        #nullable-master-checkbox:hover {
+                            border-color: #dc3545;
+                            box-shadow: 0 0 8px rgba(220, 53, 69, 0.4);
+                            transform: scale(1.05);
+                        }
+                        
+                        #nullable-master-checkbox + label {
+                            transition: color 0.3s ease;
+                        }
+                        
+                        #nullable-master-checkbox + label:hover {
+                            color: #dc3545 !important;
+                        }
+                        
+                        /* Nullable master control container hover effect */
+                        .nullable-master-control {
+                            transition: all 0.3s ease;
+                        }
+                        
+                        .nullable-master-control:hover {
+                            background: linear-gradient(135deg, #4a4a4a 0%, #3a3a3a 100%) !important;
+                            border-color: #dc3545 !important;
+                            box-shadow: 0 2px 8px rgba(220, 53, 69, 0.2);
+                        }
+                        
+                        /* 按鈕hover效果 */
+                        #add-column-btn:hover {
+                            background: linear-gradient(135deg, #5a7851 0%, #6a8861 100%) !important;
+                            transform: translateY(-2px);
+                            box-shadow: 0 4px 12px rgba(74, 103, 65, 0.4) !important;
+                        }
+                        
+                        #preview-sql-btn:hover {
+                            background: linear-gradient(135deg, #5a6f7a 0%, #6a7f8a 100%) !important;
+                            transform: translateY(-2px);
+                            box-shadow: 0 4px 12px rgba(74, 95, 106, 0.4) !important;
+                        }
+                        
+                        #add-column-btn:active, #preview-sql-btn:active {
+                            transform: translateY(0px);
+                        }
+                        
+                        /* 滾動容器樣式美化 */
+                        .schema-table-container {
+                            overflow-y: auto;
+                            border: 1px solid #555;
+                            border-radius: 6px;
+                            background-color: #2a2a2a;
+                            min-height: 0;
+                        }
+                        
+                        .schema-table-container::-webkit-scrollbar {
+                            width: 12px;
+                        }
+                        
+                        .schema-table-container::-webkit-scrollbar-track {
+                            background: #1e1e1e;
+                            border-radius: 6px;
+                        }
+                        
+                        .schema-table-container::-webkit-scrollbar-thumb {
+                            background: linear-gradient(135deg, #555 0%, #777 100%);
+                            border-radius: 6px;
+                            border: 2px solid #1e1e1e;
+                        }
+                        
+                        .schema-table-container::-webkit-scrollbar-thumb:hover {
+                            background: linear-gradient(135deg, #666 0%, #888 100%);
+                        }
+                        
+                        /* 標籤頁滾動條樣式 */
+                        #schema-bridge-tab-basic::-webkit-scrollbar {
+                            width: 8px;
+                        }
+                        
+                        #schema-bridge-tab-basic::-webkit-scrollbar-track {
+                            background: #1e1e1e;
+                            border-radius: 4px;
+                        }
+                        
+                        #schema-bridge-tab-basic::-webkit-scrollbar-thumb {
+                            background: linear-gradient(135deg, #555 0%, #777 100%);
+                            border-radius: 4px;
+                        }
+                        
+                        #schema-bridge-tab-basic::-webkit-scrollbar-thumb:hover {
+                            background: linear-gradient(135deg, #666 0%, #888 100%);
+                        }
                     </style>
                 `);
             }
@@ -114,6 +245,42 @@
             // 模式切換事件監聽
             $('input[name="operationMode"]').change(function() {
                 updateModeDisplay();
+                
+                // 重新載入支援的類型選項
+                setTimeout(function() {
+                    const operationMode = $('input[name="operationMode"]:checked').val();
+                    let targetDbType;
+                    
+                    if (operationMode === 'connection') {
+                        const targetConnection = $('#node-input-targetConnection').val();
+                        const targetConnectionNode = RED.nodes.node(targetConnection);
+                        targetDbType = targetConnectionNode ? targetConnectionNode.dbType : null;
+                    } else {
+                        targetDbType = $('#node-input-targetDbType').val();
+                    }
+                    
+                    if (targetDbType) {
+                        updateTargetTypeOptions(targetDbType);
+                    }
+                }, 100);
+            });
+            
+            // 目標連接或資料庫類型變更事件監聽
+            $('#node-input-targetConnection, #node-input-targetDbType').change(function() {
+                const operationMode = $('input[name="operationMode"]:checked').val();
+                let targetDbType;
+                
+                if (operationMode === 'connection') {
+                    const targetConnection = $('#node-input-targetConnection').val();
+                    const targetConnectionNode = RED.nodes.node(targetConnection);
+                    targetDbType = targetConnectionNode ? targetConnectionNode.dbType : null;
+                } else {
+                    targetDbType = $('#node-input-targetDbType').val();
+                }
+                
+                if (targetDbType) {
+                    updateTargetTypeOptions(targetDbType);
+                }
             });
             
             // 模式按鈕點擊事件（美化的點擊體驗）
@@ -227,7 +394,15 @@
                                 <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Column Name</th>
                                 <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Source Type</th>
                                 <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Target Type</th>
-                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Nullable</th>
+                                <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0; text-align: center;">
+                                    <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+                                        <span style="font-weight: bold; font-size: 13px;">Nullable</span>
+                                        <div class="nullable-master-control" style="display: flex; align-items: center; gap: 6px; background: linear-gradient(135deg, #3a3a3a 0%, #2a2a2a 100%); padding: 6px 10px; border-radius: 8px; border: 1px solid #555; cursor: pointer;">
+                                            <input type="checkbox" id="nullable-master-checkbox" title="Toggle all nullable columns" style="cursor: pointer;">
+                                            <label for="nullable-master-checkbox" style="font-size: 11px; color: #e0e0e0; margin: 0; cursor: pointer; font-weight: 500; text-shadow: 0 1px 2px rgba(0,0,0,0.3); user-select: none;">All</label>
+                                        </div>
+                                    </div>
+                                </th>
                                 <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Default Value</th>
                                 <th style="border: 1px solid #555; padding: 8px; color: #f0f0f0;">Actions</th>
                             </tr>
@@ -238,7 +413,50 @@
                 
                 const tbody = table.find('tbody');
                 
+                // 獲取目標資料庫類型
+                const operationMode = $('input[name="operationMode"]:checked').val();
+                let targetDbType;
+                
+                if (operationMode === 'connection') {
+                    const targetConnection = $('#node-input-targetConnection').val();
+                    const targetConnectionNode = RED.nodes.node(targetConnection);
+                    targetDbType = targetConnectionNode ? targetConnectionNode.dbType : null;
+                } else {
+                    targetDbType = $('#node-input-targetDbType').val();
+                }
+                
                 schema.forEach((column, index) => {
+                    // 使用智能轉換計算建議的目標類型
+                    let suggestedType = column.type; // 預設使用原類型
+                    
+                    if (targetDbType && column.sourceDbType) {
+                        try {
+                            // 建立臨時的SchemaMapper來計算建議類型
+                            $.ajax({
+                                url: '/schema-bridge/convert-type',
+                                method: 'POST',
+                                data: JSON.stringify({
+                                    sourceType: column.type,
+                                    sourceDbType: column.sourceDbType,
+                                    targetDbType: targetDbType,
+                                    precision: column.length || column.precision,
+                                    scale: column.scale
+                                }),
+                                contentType: 'application/json',
+                                async: false // 同步請求以獲得建議類型
+                            })
+                            .done(function(result) {
+                                suggestedType = result.targetType;
+                            })
+                            .fail(function(xhr) {
+                                // 如果轉換失敗，保持原類型
+                                console.warn(`Failed to convert type ${column.type} for ${column.name}:`, xhr.responseText);
+                            });
+                        } catch (e) {
+                            console.warn('Type conversion error:', e);
+                        }
+                    }
+                    
                     const row = $(`
                         <tr data-index="${index}" style="background-color: #2a2a2a;">
                             <td style="border: 1px solid #555; padding: 8px;">
@@ -247,7 +465,7 @@
                             <td style="border: 1px solid #555; padding: 8px; color: #b0b0b0;">${column.type}</td>
                             <td style="border: 1px solid #555; padding: 8px;">
                                 <select class="target-type" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
-                                    ${getTargetTypeOptions(column.mappedType || column.type)}
+                                    ${getTargetTypeOptions(suggestedType, targetDbType)}
                                 </select>
                             </td>
                             <td style="border: 1px solid #555; padding: 8px; text-align: center;">
@@ -264,20 +482,144 @@
                     tbody.append(row);
                 });
                 
-                container.append(table);
+                // 動態載入目標資料庫支援的類型選項（延遲執行，確保不會覆蓋已設置的建議類型）
+                if (targetDbType) {
+                    setTimeout(() => {
+                        updateTargetTypeOptionsWithPreservation(targetDbType);
+                    }, 100);
+                }
                 
-                // 新增欄位按鈕
-                const addButton = $('<button type="button" style="margin-top: 10px; background-color: #4a6741; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer;">Add Column</button>');
-                addButton.click(function() {
+                // 創建表格滾動區域
+                const tableScrollArea = $('<div style="flex: 1; display: flex; flex-direction: column; min-height: 0;"></div>');
+                const scrollContainer = $('<div class="schema-table-container" style="flex: 1;"></div>');
+                scrollContainer.append(table);
+                tableScrollArea.append(scrollContainer);
+                
+                container.append(tableScrollArea);
+                
+                // 主控 nullable checkbox 事件處理
+                $('#nullable-master-checkbox').change(function() {
+                    const isChecked = $(this).prop('checked');
+                    const nullableCheckboxes = container.find('.nullable');
+                    
+                    // 設定所有的 nullable checkbox
+                    nullableCheckboxes.prop('checked', isChecked);
+                    
+                    // 視覺反饋
+                    if (isChecked) {
+                        RED.notify(`✅ All columns set to nullable`, 'success');
+                    } else {
+                        RED.notify(`🚫 All columns set to NOT NULL`, 'success');
+                    }
+                });
+                
+                // 點擊整個控制容器也能觸發checkbox
+                container.on('click', '.nullable-master-control', function(e) {
+                    if (e.target.type !== 'checkbox' && e.target.tagName !== 'LABEL') {
+                        const checkbox = $('#nullable-master-checkbox');
+                        checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
+                    }
+                });
+                
+                // 監聽個別 nullable checkbox 變化，更新主控checkbox狀態
+                container.on('change', '.nullable', function() {
+                    updateMasterCheckboxState();
+                });
+                
+                // 更新主控checkbox的狀態（全選、部分選取、全不選）
+                function updateMasterCheckboxState() {
+                    const nullableCheckboxes = container.find('.nullable');
+                    const checkedCount = nullableCheckboxes.filter(':checked').length;
+                    const totalCount = nullableCheckboxes.length;
+                    
+                    const masterCheckbox = $('#nullable-master-checkbox');
+                    
+                    if (checkedCount === 0) {
+                        // 全部未選取
+                        masterCheckbox.prop('checked', false);
+                        masterCheckbox.prop('indeterminate', false);
+                        masterCheckbox.attr('title', `Click to set all ${totalCount} columns to nullable`);
+                    } else if (checkedCount === totalCount) {
+                        // 全部選取
+                        masterCheckbox.prop('checked', true);
+                        masterCheckbox.prop('indeterminate', false);
+                        masterCheckbox.attr('title', `All ${totalCount} columns are nullable. Click to set all to NOT NULL`);
+                    } else {
+                        // 部分選取
+                        masterCheckbox.prop('checked', false);
+                        masterCheckbox.prop('indeterminate', true);
+                        masterCheckbox.attr('title', `${checkedCount} of ${totalCount} columns are nullable. Click to set all to nullable`);
+                    }
+                }
+                
+                // 初始化主控checkbox狀態
+                setTimeout(updateMasterCheckboxState, 100);
+                
+                // 創建固定按鈕區域
+                const buttonContainer = $(`
+                    <div style="flex-shrink: 0; display: flex; gap: 12px; justify-content: flex-start; align-items: center; padding: 15px; background: linear-gradient(135deg, #1e1e1e 0%, #2a2a2a 100%); border-radius: 8px; border: 1px solid #555; margin-top: 15px;">
+                        <button type="button" id="add-column-btn" style="
+                            background: linear-gradient(135deg, #4a6741 0%, #5a7851 100%); 
+                            color: white; 
+                            border: none; 
+                            padding: 10px 16px; 
+                            border-radius: 6px; 
+                            cursor: pointer; 
+                            font-weight: 500;
+                            transition: all 0.3s ease;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                            display: flex;
+                            align-items: center;
+                            gap: 6px;
+                        ">
+                            <i class="fa fa-plus"></i> Add Column
+                        </button>
+                        <button type="button" id="preview-sql-btn" style="
+                            background: linear-gradient(135deg, #4a5f6a 0%, #5a6f7a 100%); 
+                            color: white; 
+                            border: none; 
+                            padding: 10px 16px; 
+                            border-radius: 6px; 
+                            cursor: pointer; 
+                            font-weight: 500;
+                            transition: all 0.3s ease;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                            display: flex;
+                            align-items: center;
+                            gap: 6px;
+                        ">
+                            <i class="fa fa-eye"></i> Preview SQL
+                        </button>
+                        <div style="flex: 1;"></div>
+                        <span style="color: #bbb; font-size: 12px; font-style: italic;">
+                            <i class="fa fa-info-circle"></i> Schema contains ${schema.length} column${schema.length !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+                `);
+                
+                container.append(buttonContainer);
+                
+                // 新增欄位按鈕事件
+                buttonContainer.find('#add-column-btn').click(function() {
+                    // 獲取當前目標資料庫類型決定預設類型
+                    let defaultType = 'VARCHAR(255)';
+                    if (targetDbType) {
+                        if (targetDbType === 'oracle') {
+                            defaultType = 'VARCHAR2(255)';
+                        } else if (targetDbType === 'mssql') {
+                            defaultType = 'NVARCHAR(255)';
+                        }
+                    }
+                    
                     const newRow = $(`
                         <tr data-index="${schema.length}" style="background-color: #2a2a2a;">
                             <td style="border: 1px solid #555; padding: 8px;">
                                 <input type="text" value="new_column" class="column-name" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
                             </td>
-                            <td style="border: 1px solid #555; padding: 8px; color: #b0b0b0;">VARCHAR(255)</td>
+                            <td style="border: 1px solid #555; padding: 8px; color: #b0b0b0;">${defaultType}</td>
                             <td style="border: 1px solid #555; padding: 8px;">
                                 <select class="target-type" style="width: 100%; border: none; background-color: #3a3a3a; color: #e0e0e0; padding: 4px;">
-                                    ${getTargetTypeOptions('VARCHAR(255)')}
+                                    ${getTargetTypeOptions(defaultType, targetDbType)}
                                 </select>
                             </td>
                             <td style="border: 1px solid #555; padding: 8px; text-align: center;">
@@ -292,36 +634,132 @@
                         </tr>
                     `);
                     tbody.append(newRow);
+                    
+                    // 如果有目標資料庫類型，載入支援的類型選項
+                    if (targetDbType) {
+                        const newSelect = newRow.find('.target-type');
+                        $.ajax({
+                            url: `/schema-bridge/supported-types/${targetDbType}`,
+                            method: 'GET'
+                        })
+                        .done(function(supportedTypes) {
+                            const options = supportedTypes.map(type => 
+                                `<option value="${type}" ${type === defaultType ? 'selected' : ''}>${type}</option>`
+                            ).join('');
+                            newSelect.html(options);
+                        });
+                    }
+                    
+                    // 更新主控checkbox狀態
+                    setTimeout(updateMasterCheckboxState, 50);
+                    
+                    // 更新列數統計
+                    const currentCount = tbody.find('tr').length;
+                    buttonContainer.find('span').html(`<i class="fa fa-info-circle"></i> Schema contains ${currentCount} column${currentCount !== 1 ? 's' : ''}`);
+                    
+                    // 自動滾動到底部顯示新增的行
+                    scrollContainer.animate({
+                        scrollTop: scrollContainer[0].scrollHeight
+                    }, 300);
                 });
                 
-                container.append(addButton);
-                
-                // 預覽 SQL 按鈕
-                const previewButton = $('<button type="button" style="margin-top: 10px; margin-left: 10px; background-color: #4a5f6a; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer;">Preview SQL</button>');
-                previewButton.click(generateSqlPreview);
-                container.append(previewButton);
+                // 預覽 SQL 按鈕事件
+                buttonContainer.find('#preview-sql-btn').click(generateSqlPreview);
                 
                 // 刪除欄位事件
                 container.on('click', '.delete-column', function() {
                     $(this).closest('tr').remove();
+                    
+                    // 更新主控checkbox狀態
+                    setTimeout(updateMasterCheckboxState, 50);
+                    
+                    // 更新列數統計
+                    const currentCount = tbody.find('tr').length;
+                    buttonContainer.find('span').html(`<i class="fa fa-info-circle"></i> Schema contains ${currentCount} column${currentCount !== 1 ? 's' : ''}`);
                 });
             }
             
             // 取得目標類型選項
-            function getTargetTypeOptions(selectedType) {
-                const commonTypes = [
-                    'VARCHAR(255)', 'VARCHAR(100)', 'VARCHAR(50)',
-                    'TEXT', 'NVARCHAR(255)', 'CHAR(10)',
-                    'INT', 'INTEGER', 'BIGINT', 'SMALLINT',
-                    'DECIMAL(10,2)', 'NUMERIC(10,2)', 'FLOAT', 'DOUBLE',
-                    'DATE', 'TIME', 'DATETIME', 'TIMESTAMP',
-                    'BOOLEAN', 'BIT', 'BLOB', 'CLOB',
-                    'SERIAL', 'SERIAL PRIMARY KEY'
-                ];
+            function getTargetTypeOptions(selectedType, targetDbType = null) {
+                // 如果沒有指定目標資料庫類型，使用通用類型
+                if (!targetDbType) {
+                    const commonTypes = [
+                        'VARCHAR(255)', 'VARCHAR(100)', 'VARCHAR(50)',
+                        'TEXT', 'NVARCHAR(255)', 'CHAR(10)',
+                        'INT', 'INTEGER', 'BIGINT', 'SMALLINT',
+                        'DECIMAL(10,2)', 'NUMERIC(10,2)', 'FLOAT', 'DOUBLE',
+                        'DATE', 'TIME', 'DATETIME', 'TIMESTAMP',
+                        'BOOLEAN', 'BIT', 'BLOB', 'CLOB',
+                        'SERIAL', 'SERIAL PRIMARY KEY'
+                    ];
+                    
+                    return commonTypes.map(type => 
+                        `<option value="${type}" ${type === selectedType ? 'selected' : ''}>${type}</option>`
+                    ).join('');
+                }
                 
-                return commonTypes.map(type => 
-                    `<option value="${type}" ${type === selectedType ? 'selected' : ''}>${type}</option>`
-                ).join('');
+                // 如果有目標資料庫類型，返回載入中的選項，稍後會被更新
+                return `<option value="${selectedType}" selected>${selectedType}</option>`;
+            }
+            
+            // 動態載入並更新目標類型選項
+            function updateTargetTypeOptions(targetDbType) {
+                if (!targetDbType) return;
+                
+                $.ajax({
+                    url: `/schema-bridge/supported-types/${targetDbType}`,
+                    method: 'GET'
+                })
+                .done(function(supportedTypes) {
+                    // 更新所有的目標類型選擇器
+                    $('#schema-editor-container .target-type').each(function() {
+                        const currentValue = $(this).val();
+                        const options = supportedTypes.map(type => 
+                            `<option value="${type}" ${type === currentValue ? 'selected' : ''}>${type}</option>`
+                        ).join('');
+                        $(this).html(options);
+                    });
+                })
+                .fail(function(xhr) {
+                    console.warn('Failed to load supported types:', xhr.responseText);
+                });
+            }
+            
+            // 動態載入並更新目標類型選項（保留已設置的智能建議值）
+            function updateTargetTypeOptionsWithPreservation(targetDbType) {
+                if (!targetDbType) return;
+                
+                $.ajax({
+                    url: `/schema-bridge/supported-types/${targetDbType}`,
+                    method: 'GET'
+                })
+                .done(function(supportedTypes) {
+                    // 更新所有的目標類型選擇器，但保留當前已經正確設置的值
+                    $('#schema-editor-container .target-type').each(function() {
+                        const currentValue = $(this).val();
+                        const $select = $(this);
+                        
+                        // 如果當前值在支援的類型中，或者是智能轉換的結果，則保留它
+                        let options = '';
+                        
+                        // 首先加入當前值（如果存在且不為空）
+                        if (currentValue && currentValue.trim()) {
+                            options += `<option value="${currentValue}" selected>${currentValue}</option>`;
+                        }
+                        
+                        // 然後加入其他支援的類型
+                        supportedTypes.forEach(type => {
+                            if (type !== currentValue) {
+                                options += `<option value="${type}">${type}</option>`;
+                            }
+                        });
+                        
+                        $select.html(options);
+                    });
+                })
+                .fail(function(xhr) {
+                    console.warn('Failed to load supported types:', xhr.responseText);
+                });
             }
             
             // 生成 SQL 預覽
@@ -492,9 +930,9 @@
         <ul style="min-width: 600px; margin-bottom: 20px;" id="node-schema-bridge-tabs"></ul>
     </div>
     
-    <div id="node-schema-bridge-tabs-content" style="min-height: 400px;">
+    <div id="node-schema-bridge-tabs-content" style="height: 500px; display: flex; flex-direction: column;">
         <!-- Basic Tab -->
-        <div id="schema-bridge-tab-basic" style="display:none">
+        <div id="schema-bridge-tab-basic" style="display:none; flex: 1; overflow-y: auto; padding-right: 10px;">
             <!-- Operation Mode Selection -->
             <div class="form-row" style="background: linear-gradient(135deg, #2a2a2a 0%, #1e1e1e 100%); padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #555;">
                 <label style="font-weight: bold; margin-bottom: 10px; display: block; color: #e0e0e0;"><i class="fa fa-toggle-on" style="color: #dc3545;"></i> Operation Mode</label>
@@ -522,7 +960,7 @@
             
             <!-- Source Configuration -->
             <div class="form-row">
-                <label for="node-input-sourceConnection"><i class="fa fa-database"></i> Source Connection</label>
+                <label for="node-input-sourceConnection"><i class="fa fa-database"></i> Source</label>
                 <input type="text" id="node-input-sourceConnection">
             </div>
             
@@ -538,12 +976,12 @@
             
             <!-- Target Configuration -->
             <div id="target-connection-section" class="form-row">
-                <label for="node-input-targetConnection"><i class="fa fa-database"></i> Target Connection</label>
+                <label for="node-input-targetConnection"><i class="fa fa-database"></i> Target</label>
                 <input type="text" id="node-input-targetConnection">
             </div>
             
             <div id="target-dbtype-section" class="form-row" style="display: none;">
-                <label for="node-input-targetDbType"><i class="fa fa-server"></i> Target Database Type</label>
+                <label for="node-input-targetDbType"><i class="fa fa-server"></i> Target</label>
                 <select id="node-input-targetDbType">
                     <option value="postgres">PostgreSQL</option>
                     <option value="mssql">Microsoft SQL Server</option>
@@ -585,30 +1023,32 @@
         </div>
         
         <!-- Schema Editor Tab -->
-        <div id="schema-bridge-tab-schema" style="display:none">
-            <div class="form-row">
+        <div id="schema-bridge-tab-schema" style="display:none; flex: 1; display: flex; flex-direction: column;">
+            <div style="flex-shrink: 0; margin-bottom: 15px;">
                 <h4>Schema Editor</h4>
                 <p>Modify the schema structure, column names, and data types before migration.</p>
             </div>
             
-            <div id="schema-editor-container" style="max-height: 400px; overflow-y: auto;">
+            <div id="schema-editor-container" style="flex: 1; display: flex; flex-direction: column;">
                 <p>Please select a source connection and table in the Basic tab to load the schema.</p>
             </div>
         </div>
         
         <!-- SQL Output Tab -->
-        <div id="schema-bridge-tab-sql" style="display:none">
-            <div class="form-row">
+        <div id="schema-bridge-tab-sql" style="display:none; flex: 1; display: flex; flex-direction: column;">
+            <div style="flex-shrink: 0; margin-bottom: 15px;">
                 <h4>Generated SQL</h4>
                 <p>Preview the SQL commands that will be generated based on your schema configuration.</p>
             </div>
             
-            <div class="form-row">
-                <textarea id="sql-output" style="width: 100%; height: 300px; font-family: monospace;" readonly placeholder="SQL commands will appear here..."></textarea>
-            </div>
-            
-            <div class="form-row">
-                <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('sql-output').value)">Copy SQL</button>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 15px;">
+                <textarea id="sql-output" style="flex: 1; width: 100%; font-family: monospace; border: 1px solid #555; background-color: #2a2a2a; color: #e0e0e0; padding: 10px;" readonly placeholder="SQL commands will appear here..."></textarea>
+                
+                <div style="flex-shrink: 0;">
+                    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('sql-output').value)" style="background-color: #4285F4; border-color: #3367D6; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+                        <i class="fa fa-copy"></i> Copy SQL
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -651,10 +1091,9 @@
     
     <h4>Basic Tab</h4>
     <ul>
-        <li><b>Source Connection</b> - 來源資料庫連接 (required in both modes)</li>
+        <li><b>Source</b> - 來源資料庫連接 (required in both modes)</li>
         <li><b>Source Table</b> - 來源表格名稱</li>
-        <li><b>Target Connection</b> - 目標資料庫連接 (Connection Mode only)</li>
-        <li><b>Target Database Type</b> - 目標資料庫類型 (Generation Mode only)</li>
+        <li><b>Target</b> - 目標資料庫連接 (Connection Mode) 或 目標資料庫類型 (Generation Mode)</li>
         <li><b>Target Table</b> - 目標表格名稱（可留空使用來源表格名）</li>
         <li><b>Generate SQL</b> - 產生 CREATE TABLE SQL 指令</li>
         <li><b>Create Table</b> - 執行 SQL 在目標資料庫建立表格 (Connection Mode only)</li>
