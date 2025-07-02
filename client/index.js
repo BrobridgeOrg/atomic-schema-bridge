@@ -80,7 +80,7 @@ class DatabaseClient extends events.EventEmitter {
             database: this.config.database,
             user: this.config.username,
             password: this.config.password,
-            domain: this.config.domain,
+            // domain: this.config.domain,
             requestTimeout: this.config.requestTimeout || 15000,
             connectionTimeout: this.config.connectionTimeout || 15000,
             options: {
@@ -122,24 +122,67 @@ class DatabaseClient extends events.EventEmitter {
     }
     
     async connectOracle() {
-        // 初始化 Oracle 客戶端
-        if (this.config.oracleClientPath) {
-            this.driver.initOracleClient({ libDir: this.config.oracleClientPath });
+        try {
+            // 初始化 Oracle 客戶端 - 使用與atomic-oracle相同的邏輯
+            if (this.config.oracleClientPath) {
+                this.driver.initOracleClient({ libDir: this.config.oracleClientPath });
+            } else {
+                // 如果沒有指定路徑，嘗試預設路徑（與atomic-oracle一致）
+                try {
+                    this.driver.initOracleClient({ libDir: "/usr/lib/instantclient" });
+                } catch (e) {
+                    console.warn('Oracle client initialization with default path failed, continuing without specific libDir:', e.message);
+                }
+            }
+            
+            this.driver.autoCommit = true;
+            this.driver.outFormat = this.driver.OUT_FORMAT_OBJECT;
+            
+            // 與atomic-oracle相同的連接字串格式
+            const connectString = `${this.config.server}:${this.config.port || 1521}${this.config.database ? '/' + this.config.database : ''}`;
+            
+            const config = {
+                user: this.config.username || '',
+                password: this.config.password || '',
+                connectString: connectString,
+                poolMax: this.config.poolMax || 10,
+                poolMin: this.config.poolMin || 1,
+                poolTimeout: this.config.poolTimeout || 60,
+                poolPingInterval: 60000, // 與atomic-oracle一致
+                poolPingTimeout: 5000,   // 與atomic-oracle一致
+                queueMax: 100,
+                queueTimeout: 15000
+            };
+            
+            console.log(`Connecting to Oracle: ${connectString}`);
+            this.pool = await this.driver.createPool(config);
+            this.pool.setMaxListeners(0);
+
+            
+            // 測試連接
+            const testConn = await this.pool.getConnection();
+            await testConn.close();
+
+            
+        } catch (error) {
+            console.error('Oracle connection failed:', error);
+            
+            // 提供更友好的錯誤訊息
+            let friendlyMessage = error.message;
+            if (error.message.includes('Cannot find module')) {
+                friendlyMessage = 'Oracle DB driver not installed. Please run: npm install oracledb';
+            } else if (error.message.includes('DPI-1047')) {
+                friendlyMessage = 'Oracle Instant Client not found. Please install Oracle Instant Client libraries.';
+            } else if (error.message.includes('ORA-12541')) {
+                friendlyMessage = 'Cannot connect to Oracle server. Please check server address and port.';
+            } else if (error.message.includes('ORA-01017')) {
+                friendlyMessage = 'Invalid username or password for Oracle database.';
+            } else if (error.message.includes('ORA-12154')) {
+                friendlyMessage = 'Oracle service name not found. Please check the database name.';
+            }
+            
+            throw new Error(friendlyMessage);
         }
-        
-        this.driver.autoCommit = true;
-        this.driver.outFormat = this.driver.OUT_FORMAT_OBJECT;
-        
-        const config = {
-            user: this.config.username,
-            password: this.config.password,
-            connectString: `${this.config.server}:${this.config.port || 1521}/${this.config.database}`,
-            poolMin: this.config.poolMin || 1,
-            poolMax: this.config.poolMax || 10,
-            poolTimeout: this.config.poolTimeout || 60
-        };
-        
-        this.pool = await this.driver.createPool(config);
     }
     
     async connectInformix() {
@@ -148,7 +191,7 @@ class DatabaseClient extends events.EventEmitter {
         try {
             // 對於 IBM DB，我們直接打開連接而不使用連接池進行測試
             this.connection = await this.driver.open(connectionString);
-            console.log('Informix connection successful');
+
         } catch (error) {
             console.error('Informix connection failed:', error.message);
             
@@ -168,13 +211,7 @@ class DatabaseClient extends events.EventEmitter {
     
     buildInformixConnectionString() {
         // 記錄配置用於調試
-        console.log('Informix config:', {
-            server: this.config.server,
-            port: this.config.port,
-            database: this.config.database,
-            username: this.config.username,
-            protocol: this.config.protocol
-        });
+
         
         // 檢查必要的配置
         if (!this.config.server) {
@@ -212,7 +249,7 @@ class DatabaseClient extends events.EventEmitter {
             .map(([key, value]) => `${key}=${value}`)
             .join(';') + ';';
             
-        console.log(`Informix connection string: ${connectionString}`);
+
         return connectionString;
     }
     
@@ -233,7 +270,13 @@ class DatabaseClient extends events.EventEmitter {
                     if (this.connection) await this.connection.end();
                     break;
                 case 'oracle':
-                    if (this.pool) await this.pool.close();
+                    if (this.pool) {
+                        // 使用與atomic-oracle相同的關閉邏輯
+                        await new Promise(resolve => setTimeout(resolve, 100)); // 等待一點時間避免Oracle內部關閉bug
+                        await this.pool.close(0);
+                        this.pool = null;
+
+                    }
                     break;
                 case 'informix':
                     if (this.connection) await this.connection.close();
@@ -253,7 +296,16 @@ class DatabaseClient extends events.EventEmitter {
             await this.connect();
         }
         
-        console.log(`[DatabaseClient] Getting schema for table: ${tableName}, dbType: ${this.dbType}`);
+        // 驗證輸入參數
+        if (!tableName || typeof tableName !== 'string') {
+            throw new Error(`Invalid table name: ${tableName}. Table name must be a non-empty string.`);
+        }
+        
+        if (!this.dbType) {
+            throw new Error('Database type is not set');
+        }
+        
+
         
         let query;
         switch (this.dbType) {
@@ -307,6 +359,12 @@ class DatabaseClient extends events.EventEmitter {
                 break;
                 
             case 'oracle':
+                // 確保 tableName 存在且為字串
+                if (!tableName || typeof tableName !== 'string') {
+                    throw new Error(`Invalid table name for Oracle: ${tableName}`);
+                }
+                
+                // Oracle表名通常是大寫，但我們先嘗試原始名稱，再嘗試大寫
                 query = `
                     SELECT 
                         COLUMN_NAME as column_name,
@@ -317,7 +375,7 @@ class DatabaseClient extends events.EventEmitter {
                         NULLABLE as is_nullable,
                         DATA_DEFAULT as column_default
                     FROM USER_TAB_COLUMNS 
-                    WHERE TABLE_NAME = UPPER('${tableName}')
+                    WHERE TABLE_NAME = '${tableName}' OR TABLE_NAME = '${tableName.toUpperCase()}'
                     ORDER BY COLUMN_ID
                 `;
                 break;
@@ -369,7 +427,7 @@ class DatabaseClient extends events.EventEmitter {
                     ORDER BY c.colno
                 `;
                 
-                console.log(`[DatabaseClient] Using simplified Informix query first`);
+
                 // 先使用簡化查詢，如果需要可以切換到 complexQuery
                 break;
                 
@@ -377,8 +435,7 @@ class DatabaseClient extends events.EventEmitter {
                 throw new Error(`Unsupported database type: ${this.dbType}`);
         }
         
-        console.log(`[DatabaseClient] Generated query for ${this.dbType}:`);
-        console.log(query);
+
         
         return await this.executeQuery(query);
     }
@@ -388,7 +445,7 @@ class DatabaseClient extends events.EventEmitter {
             await this.connect();
         }
         
-        console.log(`[DatabaseClient] Executing query on ${this.dbType}...`);
+
         
         try {
             switch (this.dbType) {
@@ -410,23 +467,72 @@ class DatabaseClient extends events.EventEmitter {
                     return mysqlRows;
                     
                 case 'oracle':
-                    const oracleConn = await this.pool.getConnection();
                     try {
-                        const oracleResult = await oracleConn.execute(query);
-                        return oracleResult.rows;
-                    } finally {
-                        await oracleConn.close();
+                        const oracleConn = await this.pool.getConnection();
+                        try {
+                            const oracleResult = await oracleConn.execute(query);
+                            
+                            // Oracle返回的結果格式可能不同，需要處理
+                            let processedRows = [];
+                            
+                            if (oracleResult.rows && oracleResult.rows.length > 0) {
+                                // 檢查Oracle結果格式 - 可能是陣列或物件
+                                if (Array.isArray(oracleResult.rows[0])) {
+                                    // 如果是陣列格式，需要映射到對應的欄位名稱
+                                    const columns = oracleResult.metaData || [];
+
+                                    
+                                    processedRows = oracleResult.rows.map(row => {
+                                        const rowObj = {};
+                                        columns.forEach((col, index) => {
+                                            rowObj[col.name.toLowerCase()] = row[index];
+                                        });
+                                        return rowObj;
+                                    });
+                                } else {
+                                    // 如果已經是物件格式，直接使用
+                                    processedRows = oracleResult.rows;
+                                }
+                                
+                                // 確保欄位名稱符合預期格式（轉為小寫）
+                                processedRows = processedRows.map(row => {
+                                    const normalizedRow = {};
+                                    Object.keys(row).forEach(key => {
+                                        const lowerKey = key.toLowerCase();
+                                        normalizedRow[lowerKey] = row[key];
+                                    });
+                                    return normalizedRow;
+                                });
+                                
+
+                            }
+                            
+                            return processedRows;
+                        } finally {
+                            await oracleConn.close();
+                        }
+                    } catch (oracleError) {
+                        console.error(`Oracle query failed:`, oracleError);
+                        
+                        // 提供更友好的Oracle錯誤訊息
+                        let friendlyMessage = oracleError.message;
+                        if (oracleError.message.includes('ORA-00942')) {
+                            friendlyMessage = `Table or view does not exist. Please check the table name and your permissions.`;
+                        } else if (oracleError.message.includes('ORA-00904')) {
+                            friendlyMessage = `Invalid column name in the query.`;
+                        } else if (oracleError.message.includes('ORA-01017')) {
+                            friendlyMessage = `Invalid username/password; logon denied.`;
+                        }
+                        
+                        throw new Error(`Oracle query error: ${friendlyMessage}`);
                     }
                     
                 case 'informix':
-                    console.log(`[DatabaseClient] Executing Informix query...`);
                     try {
                         const infResult = await this.connection.query(query);
-                        console.log(`[DatabaseClient] Informix query executed successfully, rows: ${infResult?.length || 0}`);
                         
                         // 轉換基本查詢結果為標準格式
                         if (infResult && infResult.length > 0 && 'colname' in infResult[0]) {
-                            console.log(`[DatabaseClient] Converting Informix basic result to standard format`);
                             return infResult.map(row => ({
                                 column_name: row.colname,
                                 data_type: this.convertInformixType(row.coltype),
@@ -440,13 +546,11 @@ class DatabaseClient extends events.EventEmitter {
                         
                         return infResult;
                     } catch (infError) {
-                        console.error(`[DatabaseClient] Informix query failed: ${infError.message}`);
+                        console.error(`Informix query failed: ${infError.message}`);
                         // 如果還是失敗，嘗試最簡單的查詢
                         if (infError.message.includes('syntax error')) {
-                            console.log(`[DatabaseClient] Trying ultra-simple Informix query...`);
                             const tableName = query.match(/tabname = '([^']+)'/)?.[1] || 'unknown';
                             const fallbackQuery = `SELECT colname, coltype, collength FROM syscolumns WHERE tabid IN (SELECT tabid FROM systables WHERE tabname = '${tableName}')`;
-                            console.log(`[DatabaseClient] Fallback query: ${fallbackQuery}`);
                             const fallbackResult = await this.connection.query(fallbackQuery);
                             // 轉換為標準格式
                             return fallbackResult.map(row => ({
@@ -466,7 +570,7 @@ class DatabaseClient extends events.EventEmitter {
                     throw new Error(`Unsupported database type: ${this.dbType}`);
             }
         } catch (error) {
-            console.error(`[DatabaseClient] Query execution failed for ${this.dbType}:`);
+            console.error(`Query execution failed for ${this.dbType}:`);
             console.error(`Error: ${error.message}`);
             console.error(`Query: ${query}`);
             throw new Error(`Query execution failed: ${error.message}`);
